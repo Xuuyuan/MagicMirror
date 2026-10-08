@@ -1,0 +1,63 @@
+{
+  "_fixture": {
+    "source": "测试构造（test-constructed）",
+    "endpoint": "GET /v2/user-center/user-snapshot?devicetype=1",
+    "evidence_level": "键集=证据（2026-09-25 实测，见 captures.md §3）；具体值=虚构",
+    "verified_facts": {
+      "linkedStudent_key_count": "实测 18 个键，含 className、isGraduateClass、leadsDifficultFlag、id（与 studentId 不同）",
+      "organInfo_nullable": "实测家长版为 null → Provider 不能假设它存在",
+      "isVirtual_observed_2": "实测在真实在校学生上 isVirtual=2、virtualType=2 → 不能把 2 当作『虚拟学生』",
+      "server_returns_more_than_entity": "服务端返回的字段多于客户端实体类（Gson 静默忽略多余键）"
+    },
+    "note": "仅保留与 StudentProfile 映射相关的字段；实测响应还含 syInfo / cbsToken / feedToken / userTag 等（已省略以免样例包含凭据类字段）"
+  },
+  "code": 0,
+  "msg": "查询成功",
+  "data": {
+    "userId": "0123456789abcdef01234567",
+    "username": "",
+    "phoneNumber": "13800000000",
+    "emailAddress": "",
+    "roleType": 2,
+    "nextChangeTime": 0,
+    "hadBoundWechat": false,
+    "allowToChangeUserName": true,
+    "isMember": false,
+    "isExamMember": false,
+    "examMemberType": 0,
+    "memberEnd": "",
+    "isPay": false,
+    "pointMall_2001": 0,
+    "showClassGroup": 1,
+    "agent": 0,
+    "schoolOperate": 0,
+    "isStrongBaseSchool": false,
+    "organInfo": null,
+    "linkedStudent": {
+      "id": "900000000000000001",
+      "studentId": "900000000000000001",
+      "studentName": "示例学生",
+      "schoolId": "800000000000000001",
+      "schoolName": "虚构第一中学",
+      "grade": "高二",
+      "sgrade": "高二",
+      "className": "03班",
+      "xuehao": ["01"],
+      "kaohao": [],
+      "xuejihao": "",
+      "isVirtual": 2,
+      "virtualType": 2,
+      "accountType": -1,
+      "isGraduateClass": true,
+      "leadsDifficultFlag": false,
+      "bindTime": 1700000000000,
+      "changeBindTime": -1
+    }
+  },
+  "_sentinel_values": {
+    "changeBindTime = -1": "实测出现，表示无变更记录（哨兵）",
+    "accountType = -1": "实测出现，含义未验证",
+    "virtualType = 2 / isVirtual = 2": "实测出现在真实学生上，含义未验证（Q11 未解决）"
+  },
+  "_privacy_note": "真实响应还包含 phoneNumber、feedToken、cbsToken、userTag、syInfo 等个人/凭据类字段。Provider 只应取 linkedStudent 用于 StudentProfile，其余字段不得写入日志或持久化。"
+}

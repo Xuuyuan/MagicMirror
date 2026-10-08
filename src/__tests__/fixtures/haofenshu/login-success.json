@@ -1,0 +1,37 @@
+{
+  "_fixture": {
+    "source": "测试构造（test-constructed）",
+    "endpoint": "POST /v2/users/sessions",
+    "host": "https://hfs-be.yunxiao.com",
+    "evidence_level": "键集与类型=证据（2026-09-25 经授权账号实测，见 captures.md §2.1/§3）；具体值=虚构",
+    "request_body_shape": {
+      "loginName": "<账号>",
+      "password": "<标准 Base64(明文UTF-8)，无尾随换行>",
+      "roleType": "1=学生版 | 2=家长版",
+      "loginType": 1,
+      "rememberMe": 1,
+      "deviceType": 1
+    },
+    "note": "实测：data.token 与 Set-Cookie 的 hfs-session-id 值完全相同；响应中不存在 phone/ticket/cookie 字段"
+  },
+  "code": 0,
+  "msg": "登录成功",
+  "data": {
+    "userId": "0123456789abcdef01234567",
+    "loginName": "13800000000",
+    "roleType": 2,
+    "loginType": "1",
+    "studentId": "900000000000000001",
+    "rememberMe": 1,
+    "deviceType": 1,
+    "needUpdatePassword": false,
+    "fdToken": "TEST_FDTOKEN_PLACEHOLDER_NOT_A_REAL_VALUE",
+    "token": "TEST_SESSION_TOKEN_PLACEHOLDER_NOT_A_REAL_VALUE"
+  },
+  "_set_cookie_observed": {
+    "name": "hfs-session-id",
+    "attributes": ["Max-Age=31104000", "Domain=.yunxiao.com", "Path=/", "SameSite=None", "Secure"],
+    "HttpOnly": false,
+    "_note": "实测值为 119 字符且与 data.token 相同；此处不放置任何真实值"
+  }
+}

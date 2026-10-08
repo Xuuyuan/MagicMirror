@@ -1,0 +1,143 @@
+{
+  "_fixture": {
+    "source": "测试构造（test-constructed）",
+    "endpoint": "GET /v3/exam/{examId}/overview",
+    "host": "https://hfs-be.yunxiao.com",
+    "evidence_level": "键集/枚举/哨兵语义=证据（2026-09-25 实测，见 captures.md §2.5/§3）；具体值=虚构",
+    "verified_facts": {
+      "rank_sentinel": "classRank / gradeRank / groupRank 及三个 *DefeatRatio 实测为 -1，表示未下发/被屏蔽",
+      "rankS_grammar": "classRankS 实测为单个 ASCII 字母（等级制）；gradeRankS / groupRankS 实测为 '**'",
+      "denominators_exist": "classStuNum / gradeStuNum / groupStuNum 实测存在（班级 53、年级/联考组 >=1000）",
+      "gradeRankClass_varies": "实测观察到 2 与 4，是真实计算的档位",
+      "score_numeric": "除 scoreS 外还有数值型 score / scoreBeforeGrading",
+      "checkYlt_header": "实测该请求头可选（带 false 与不带都成功）"
+    },
+    "note": "主样例对应 exam-list.json 的 examId=100000000001；另附『数值名次未被屏蔽』与『缺考科目』两个测试构造变体（真实环境未观察到）"
+  },
+  "code": 0,
+  "msg": "查询成功",
+  "data": {
+    "examId": 100000000001,
+    "name": "虚构市期中联考",
+    "time": 1767225600000,
+    "type": 5,
+    "mode": 1,
+    "score": 612,
+    "scoreS": "612",
+    "scoreBeforeGrading": 612,
+    "scoreBeforeGradingS": "612",
+    "manfen": 750,
+    "manfenBeforeGrading": 750,
+    "classRank": -1,
+    "classRankType": 2,
+    "classRankS": "A",
+    "classDefeatRatio": -1,
+    "classStuNum": 48,
+    "gradeRank": -1,
+    "gradeRankType": 1,
+    "gradeRankS": "**",
+    "gradeDefeatRatio": -1,
+    "gradeStuNum": 620,
+    "groupRank": -1,
+    "groupRankS": "**",
+    "groupDefeatRatio": -1,
+    "groupStuNum": 1180,
+    "gradeRankClass": 2,
+    "rankType": 4,
+    "visible": 2,
+    "thirdVisible": 2,
+    "signStatus": 2,
+    "isYLT": 0,
+    "isStrongBaseSchool": false,
+    "star": 0,
+    "badge": [1, 2],
+    "papers": [
+      {
+        "paperId": "1000000000123",
+        "pid": "0123456789abcdef01234567",
+        "name": "语文（虚构）",
+        "subject": "语文",
+        "type": 1,
+        "manfen": 150,
+        "manfenBeforeGrading": 150,
+        "score": 118,
+        "scoreS": "118",
+        "scoreBeforeGrading": 118,
+        "scoreBeforeGradingS": "118",
+        "cheatFlag": 1,
+        "cheatOrgScore": 118,
+        "cheatOrgScoreS": "118",
+        "transScore": 2,
+        "gradingType": 0,
+        "selectType": 0,
+        "subPaperType": 0,
+        "weakAdvantageStatus": 1,
+        "hasTeacherComment": 2,
+        "thirdVisible": 2,
+        "star": 0,
+        "scoreLevel": {},
+        "fujiati": {},
+        "comment": {}
+      }
+    ]
+  },
+  "_variant_rank_not_masked": {
+    "_case": "测试构造：若学校策略下发数值名次，则 *Rank 为正整数、*RankS 可能是名次分数串。Provider 才能产出 ranking.rank",
+    "data": {
+      "examId": 100000000099,
+      "name": "虚构考试（下发名次）",
+      "score": 600,
+      "scoreS": "600",
+      "manfen": 750,
+      "classRank": 3,
+      "classRankType": 1,
+      "classRankS": "3",
+      "classStuNum": 50,
+      "gradeRank": 28,
+      "gradeRankType": 1,
+      "gradeRankS": "28",
+      "gradeStuNum": 600,
+      "groupRank": -1,
+      "groupRankS": "**",
+      "groupStuNum": 0,
+      "gradeRankClass": 1,
+      "papers": []
+    }
+  },
+  "_variant_missing_subject": {
+    "_case": "测试构造：缺考科目 —— Provider 必须省略该科，不得输出 score: 0",
+    "papers": [
+      {
+        "paperId": "1000000000124",
+        "pid": "0123456789abcdef01234568",
+        "name": "英语（虚构）",
+        "subject": "英语",
+        "type": 1,
+        "manfen": 150,
+        "score": 0,
+        "scoreS": "缺考",
+        "transScore": 2,
+        "cheatFlag": 1,
+        "selectType": 0,
+        "gradingType": 0,
+        "hasTeacherComment": 2,
+        "thirdVisible": 2,
+        "star": 0
+      }
+    ]
+  },
+  "_constants_evidence": {
+    "GradeRankClass": "0 SHIELD(默认), 1 EXCELLENT, 2 GOOD, 3 MEDIUM, 4 NOT_GOOD, 5 BAD（枚举代码；实测出现 2 与 4）",
+    "transScore": "1=折算, 2=正常（SCORE_TRANS=1 / SCROE_NORMAL=2；实测样本恒为 2）",
+    "cheatFlag": "1=无作弊, 2=作弊（实测为 1）",
+    "ExamType": "0 其他,1 期中,2 期末,3 月考,4 竞赛,5 普通考试,6 联考,7 单元测试,8 模块检测,9 专项复习,10 入学考,11 问卷",
+    "ExamMode": "0 OTHER,1 NORMAL,2 WEN_LI,3 THREE_ONE_TWO,4 THREE_THREE"
+  },
+  "_semantics_unverified": {
+    "rankType / classRankType / gradeRankType": "实测 4 / 2 / 1，编码含义未验证（Q2）",
+    "visible / thirdVisible / signStatus / isYLT": "实测恒定（2/2/2/0），含义未验证（Q6）",
+    "gradeRankClass 与 *RankS 的对应关系": "未验证（Q2）",
+    "star / badge": "语义与用途未验证",
+    "fujiati / comment / scoreLevel": "实测为空对象，未验证其填充条件"
+  }
+}

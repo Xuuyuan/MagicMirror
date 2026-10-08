@@ -1,0 +1,3 @@
+import { providerRegistry } from '@/src/providers/registry'; import { capabilitiesSchema } from '@/src/domain/models';
+describe('provider contracts', () => { it('registers real providers and capabilities', () => { for (const provider of providerRegistry.list()) expect(capabilitiesSchema.parse(provider.capabilities).results).toBe(true); expect(providerRegistry.get('mock')).toBeUndefined(); }); });
+describe('provider contracts', () => { it('registers the independent 百分智 provider', () => { const provider = providerRegistry.get('bfzks'); expect(provider?.metadata.name).toContain('百分智'); expect(provider?.metadata.officialDomain).toBe('https://www.bfzks.com'); expect(capabilitiesSchema.parse(provider?.capabilities).results).toBe(true); }); });

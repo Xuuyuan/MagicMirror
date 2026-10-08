@@ -1,0 +1,16 @@
+// 直连 dl.google.com / repo1.maven.org 不可达时，用阿里云镜像补齐 Gradle 依赖。
+// 用法：gradlew assembleRelease --init-script ..\tools\gradle-mirror.init.gradle
+// 仅在需要离线镜像的构建中显式传入，不改变 android/ 目录里的仓库声明。
+allprojects {
+  buildscript {
+    repositories {
+      maven { url = uri('https://maven.aliyun.com/repository/google') }
+      maven { url = uri('https://maven.aliyun.com/repository/gradle-plugin') }
+      maven { url = uri('https://maven.aliyun.com/repository/public') }
+    }
+  }
+  repositories {
+    maven { url = uri('https://maven.aliyun.com/repository/google') }
+    maven { url = uri('https://maven.aliyun.com/repository/public') }
+  }
+}
