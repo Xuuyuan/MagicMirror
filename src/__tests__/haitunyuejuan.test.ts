@@ -145,6 +145,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(result.totalScore).toBe(200);
     expect(result.maxTotalScore).toBe(250);
     expect(result.gradePercentile).toBe('超过55.2%');
+    expect(result.defeatRates).toEqual([{ scope: 'class', value: 60.5 }, { scope: 'grade', value: 55.2 }]);
     // 平台没有下发参考人数；击败率不能反推出官方精确人数。
     expect(result.ranking).toEqual({ scope: 'grade', rank: 40 });
     expect(result.rankings).toEqual([{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }]);
@@ -205,6 +206,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
       { scope: '班级', averageScore: 105.5, rank: 4 },
       { scope: '年级', averageScore: 98.2, rank: 33 },
     ]);
+    expect(detail.defeatRates).toEqual([{ scope: 'class', value: 70.1 }, { scope: 'grade', value: 62.3 }]);
     expect(detail.questionScoreSummaries).toEqual([
       { kind: 'objective', score: 60, maxScore: 70 },
       { kind: 'subjective', score: 60, maxScore: 80 },

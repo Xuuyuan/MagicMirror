@@ -305,6 +305,10 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
           ...(Object.keys(context).length ? { providerContext: context } : {}),
         };
       });
+      const defeatRates = [
+        { scope: 'class' as const, value: total?.beatClass },
+        { scope: 'grade' as const, value: total?.beatGrade },
+      ].filter((item): item is { scope: 'class' | 'grade'; value: number } => typeof item.value === 'number' && item.value >= 0 && item.value <= 100);
       // 平台不总在汇总行给满分；各科满分都有值时按官方语义取加和。
       const maxTotalScore = total?.fullScore ?? (subjects.every((row) => typeof row.fullScore === 'number' && row.fullScore > 0)
         ? subjects.reduce((sum, row) => sum + (row.fullScore ?? 0), 0)
@@ -316,6 +320,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         ranking: rankings.find((item) => item.scope === 'grade') ?? rankings[0],
         ...(rankings.length ? { rankings } : {}),
         gradePercentile: total?.beatGrade !== null && total?.beatGrade !== undefined ? `超过${total.beatGrade}%` : undefined,
+        ...(defeatRates.length ? { defeatRates } : {}),
         ...(insightReport(insight) ? { reportSections: insightReport(insight) } : {}),
       };
     },
@@ -357,9 +362,14 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         { scope: '班级', averageScore: detail.classAvgScore ?? undefined, rank: detail.classRank ?? undefined },
         { scope: '年级', averageScore: detail.gradeAvgScore ?? undefined, rank: detail.gradeRank ?? undefined },
       ].filter((item) => item.averageScore !== undefined || item.rank !== undefined);
+      const defeatRates = [
+        { scope: 'class' as const, value: detail.beatClass },
+        { scope: 'grade' as const, value: detail.beatGrade },
+      ].filter((item): item is { scope: 'class' | 'grade'; value: number } => typeof item.value === 'number' && item.value >= 0 && item.value <= 100);
       return {
         subjectId, subject: detail.subjectName,
         score: numericScore(detail.score), maxScore: detail.fullScore ?? undefined,
+        ...(defeatRates.length ? { defeatRates } : {}),
         ...(statistics.length ? { statistics } : {}),
         ...(questions ? { questions } : {}),
         ...(summaries?.length ? { questionScoreSummaries: summaries } : {}),
