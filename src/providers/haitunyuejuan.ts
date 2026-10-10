@@ -80,6 +80,10 @@ const smallScoresSchema = z.array(z.object({
   tihao: z.string().min(1), questionType: z.string(), score: z.number(), fullScore: z.number(),
   stuAnswer: z.string().nullable().optional(), answer: z.string().nullable().optional(),
 }));
+const questionAnalysisSchema = z.array(z.object({
+  type: z.union([z.number(), z.string()]), typeName: z.string(), fullScore: z.number(), myScore: z.number(),
+  gradeRightRate: z.number(), gradeAvgScore: z.number(),
+}));
 const answerSheetDataSchema = z.object({ imgs: z.array(z.string().min(1)) });
 
 function parse<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
@@ -114,6 +118,22 @@ function insightReport(data: z.infer<typeof insightSchema> | undefined): ReportS
   ] : undefined;
   if (!notes.length && !reportItems.length && !highlights?.length) return undefined;
   return [{ id: 'haitun-insight', title: '考试小结', notes, highlights, highlightColumns: highlights?.length === 3 ? 3 : undefined, items: reportItems }];
+}
+
+function questionAnalysisReport(data: z.infer<typeof questionAnalysisSchema> | undefined): ReportSection[] | undefined {
+  if (!data?.length) return undefined;
+  return [{
+    id: 'haitun-question-analysis',
+    title: '逐题分析',
+    items: data.map((item, index) => ({
+      label: `${item.typeName} ${index + 1}`,
+      values: {
+        '本人得分': `${item.myScore} / ${item.fullScore}`,
+        '年级均分': String(item.gradeAvgScore),
+        '年级正确率': `${item.gradeRightRate}%`,
+      },
+    })),
+  }];
 }
 
 /** 平台标识为纯数字 ID。 */
@@ -301,7 +321,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
       if (!numericId(examId) || !numericId(subjectId)) throw new ProviderError('NOT_FOUND', '考试或科目标识无效');
       const path = `/api/student/v1/exams/${encodeURIComponent(examId)}/subjects/${encodeURIComponent(subjectId)}`;
       // 明细与小分相互独立；小分缺失（无逐题权限等）不阻断科目页，仅提示。
-      const [detail, smallScores] = await Promise.all([
+      const [detail, smallScores, questionAnalysis] = await Promise.all([
         request(session, withQuery(session, `${path}/detail`), { signal: options?.signal }).then((body) => parse(subjectDetailSchema, body.data, '科目明细')),
         request(session, withQuery(session, `${path}/small-scores`), { signal: options?.signal })
           .then((body) => parse(smallScoresSchema, body.data, '逐题小分'))
@@ -309,6 +329,13 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
             throwIfAborted(options?.signal);
             if (error instanceof ProviderError && error.code !== 'SESSION_EXPIRED') return undefined;
             throw error;
+          }),
+        request(session, withQuery(session, `${path}/question-analysis`), { signal: options?.signal })
+          .then((body) => parse(questionAnalysisSchema, body.data, '逐题分析'))
+          .catch((error: unknown) => {
+            throwIfAborted(options?.signal);
+            if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;
+            return undefined;
           }),
       ]);
       const questions: QuestionScore[] | undefined = smallScores?.map((row) => {
@@ -323,6 +350,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         const kind = row.questionType === '1' ? 'objective' as const : row.questionType === '2' ? 'subjective' as const : undefined;
         return kind ? [{ kind, score: row.score, maxScore: row.fullScore }] : [];
       });
+      const reportSections = questionAnalysisReport(questionAnalysis);
       const statistics: SubjectStatistic[] = [
         { scope: '班级', averageScore: detail.classAvgScore ?? undefined, rank: detail.classRank ?? undefined },
         { scope: '年级', averageScore: detail.gradeAvgScore ?? undefined, rank: detail.gradeRank ?? undefined },
@@ -333,6 +361,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         ...(statistics.length ? { statistics } : {}),
         ...(questions ? { questions } : {}),
         ...(summaries?.length ? { questionScoreSummaries: summaries } : {}),
+        ...(reportSections ? { reportSections } : {}),
         questionNotice: questions?.length ? undefined : '平台未提供本场科目的逐题小分。',
       };
     },

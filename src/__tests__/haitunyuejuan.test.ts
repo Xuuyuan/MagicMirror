@@ -45,6 +45,10 @@ const smallScores = [
   { tihao: '2.3.1', questionType: '2', score: 6, fullScore: 10, stuAnswer: '', answer: '' },
   { tihao: '2.3.2', questionType: '9', score: 2, fullScore: 4, stuAnswer: '', answer: '' },
 ];
+const questionAnalysis = [
+  { type: 1, typeName: '单选题', fullScore: 5, myScore: 5, gradeRightRate: 91.55, gradeAvgScore: 4.58, video: '' },
+  { type: 2, typeName: '主观题', fullScore: 10, myScore: 6, gradeRightRate: 60, gradeAvgScore: 7, video: '' },
+];
 const answerSheet = { imgs: ['http://ossimage.haitunyuejuan.com/fake-000001.jpg', 'http://ossimage.haitunyuejuan.com/fake-000002.jpg'], sizes: [[100, 100]] };
 
 interface Route { match: string; status?: number; body: unknown }
@@ -202,6 +206,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     const { provider } = setup(standardRoutes([
       { match: '/detail', body: okEnvelope(subjectDetail) },
       { match: '/small-scores', body: okEnvelope(smallScores) },
+      { match: '/question-analysis', body: okEnvelope(questionAnalysis) },
     ]));
     const detail = await provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult());
     expect(detail.subject).toBe('数学');
@@ -215,6 +220,12 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
       { kind: 'objective', score: 60, maxScore: 70 },
       { kind: 'subjective', score: 60, maxScore: 80 },
     ]);
+    expect(detail.reportSections).toEqual([{
+      id: 'haitun-question-analysis', title: '逐题分析', items: [
+        { label: '单选题 1', values: { '本人得分': '5 / 5', '年级均分': '4.58', '年级正确率': '91.55%' } },
+        { label: '主观题 2', values: { '本人得分': '6 / 10', '年级均分': '7', '年级正确率': '60%' } },
+      ],
+    }]);
     expect(detail.questions).toHaveLength(4);
     expect(detail.questions?.[0]).toMatchObject({ id: '1.1', kind: 'objective', myAnswer: 'C', answer: 'C' });
     expect(detail.questions?.[1]).toMatchObject({ id: '1.2', kind: 'objective', myAnswer: 'A', answer: 'B' });
@@ -230,6 +241,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     const { provider } = setup(standardRoutes([
       { match: '/detail', body: okEnvelope(subjectDetail) },
       { match: '/small-scores', body: { errno: 500, errmsg: '虚构内部错误', data: null } },
+      { match: '/question-analysis', body: { errno: 500, errmsg: '虚构内部错误', data: null } },
     ]));
     const detail = await provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult());
     expect(detail.subject).toBe('数学');
