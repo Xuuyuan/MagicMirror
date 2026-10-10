@@ -207,11 +207,36 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
     async getProfile(session, options?: ProviderRequestOptions) {
       assertSession(session);
       const bindings = parse(bindingsSchema, (await request(session, `${host}/api/student/v1/students`, { signal: options?.signal })).data, '学生信息');
-      const selected = defaultBinding(bindings);
-      if (!selected) throw new ProviderError('NOT_FOUND', '该账号未绑定学生');
+      const current = contextBinding(session);
+      const selected = bindings.find((binding) => String(binding.bindingId) === current.bindingId && String(binding.studentId) === current.studentId);
+      if (!selected) throw new ProviderError('NOT_FOUND', '当前学生已不在绑定列表中，请切换学生');
       return {
         id: String(selected.studentId), displayName: selected.name,
         schoolName: selected.schoolName || undefined, grade: selected.grade || undefined,
+      };
+    },
+    async getProfiles(session, options) {
+      assertSession(session);
+      const bindings = parse(bindingsSchema, (await request(session, `${host}/api/student/v1/students`, { signal: options?.signal })).data, '学生信息');
+      return bindings.map((binding) => ({
+        id: String(binding.bindingId), displayName: binding.name,
+        schoolName: binding.schoolName || undefined, grade: binding.grade || undefined,
+        selected: String(binding.bindingId) === session.providerContext?.bindingId && String(binding.studentId) === session.providerContext?.studentId,
+        providerContext: { bindingId: String(binding.bindingId), studentId: String(binding.studentId) },
+      }));
+    },
+    async selectProfile(session, profileId, options) {
+      assertSession(session);
+      if (!numericId(profileId)) throw new ProviderError('NOT_FOUND', '学生标识无效');
+      const bindings = parse(bindingsSchema, (await request(session, `${host}/api/student/v1/students`, { signal: options?.signal })).data, '学生信息');
+      const selected = bindings.find((binding) => String(binding.bindingId) === profileId);
+      if (!selected) throw new ProviderError('NOT_FOUND', '未找到该绑定学生');
+      return {
+        ...session,
+        providerContext: {
+          ...session.providerContext,
+          bindingId: String(selected.bindingId), studentId: String(selected.studentId), studentName: selected.name,
+        },
       };
     },
     async getExamList(session, page = {}, options?: ProviderRequestOptions) {

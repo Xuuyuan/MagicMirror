@@ -7,7 +7,8 @@ import { deleteSecureItem, getSecureItem, setSecureItem } from './secure';
 const indexKey = 'magicmirror.accounts.v1';
 const activeKey = 'magicmirror.active.v1';
 const key = (id: string) => `magicmirror.account.${id}`;
-const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token']).optional(), password: z.string().optional(), session: sessionSchema.optional() });
+const profileSchema = z.object({ id: z.string(), displayName: z.string(), schoolName: z.string().optional(), grade: z.string().optional(), providerContext: z.record(z.string(), z.string()).optional() });
+const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token']).optional(), password: z.string().optional(), session: sessionSchema.optional(), selectedProfile: profileSchema.optional() });
 let queue: Promise<unknown> = Promise.resolve();
 function serialize<T>(operation: () => Promise<T>): Promise<T> {
   const result = queue.then(operation, operation);
@@ -39,6 +40,14 @@ export const accountStorage = {
       if (!current || current.revision !== revision) return false;
       if (expectedToken !== undefined && current.session?.accessToken !== expectedToken) return false;
       await save({ ...current, session });
+      return true;
+    });
+  },
+  selectProfile(id: string, revision: string, expectedToken: string, session: NonNullable<LocalAccount['session']>, selectedProfile: NonNullable<LocalAccount['selectedProfile']>) {
+    return serialize(async () => {
+      const current = await load(id);
+      if (!current || current.revision !== revision || current.session?.accessToken !== expectedToken) return false;
+      await save({ ...current, revision: Crypto.randomUUID(), session, selectedProfile });
       return true;
     });
   },

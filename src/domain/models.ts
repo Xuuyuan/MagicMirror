@@ -1,7 +1,7 @@
 import { z } from 'zod';
 export const capabilitiesSchema = z.object({ profile: z.boolean(), exams: z.boolean(), results: z.boolean(), ranking: z.boolean(), subjectDetails: z.boolean().optional(), questionScores: z.boolean().optional(), answerSheets: z.boolean().optional() });
 export type ProviderCapabilities = z.infer<typeof capabilitiesSchema>;
-export interface StudentProfile { id: string; displayName: string; schoolName?: string; grade?: string; }
+export interface StudentProfile { id: string; displayName: string; schoolName?: string; grade?: string; selected?: boolean; providerContext?: Record<string, string>; }
 export interface ExamSummary { isUnion?: boolean; id: string; name: string; date?: string; /** 考试性质（如「周测」「月考」），平台未给出时由 Provider 兜底为「其它」。 */ category?: string; subjectCount?: number; hasResult?: boolean; availability?: 'unavailable'; }
 export interface UnclaimedExam { id: string; name: string; date?: string; studentCodes: string[]; }
 export interface ClaimCandidate { studentCode: string; url?: string; }
@@ -19,7 +19,7 @@ export interface DistributionGroup { id: string; title: string; layout: 'options
 export interface QuestionScore { id: string; label: string; score?: number; maxScore?: number; children?: QuestionScore[]; providerContext?: Record<string, string>; /** 题目类型：objective=客观题（带作答与正确答案），subjective=主观题。平台未区分时缺省。 */ kind?: 'objective' | 'subjective'; /** 我的作答（客观题）。 */ myAnswer?: string; /** 正确答案（客观题）。 */ answer?: string; }
 export interface QuestionScoreSummary { kind: 'objective' | 'subjective'; score: number; maxScore: number; inferred?: boolean; }
 export interface SubjectDetail { subjectId: string; subject: string; score?: number; maxScore?: number; grade?: string; defeatRates?: DefeatRate[]; providerContext?: Record<string, string>; statistics?: SubjectStatistic[]; chapterAnalysis?: SubjectAnalysisItem[]; abilityAnalysis?: SubjectAnalysisItem[]; abilityScoreAnalysis?: SubjectAnalysisItem[]; questions?: QuestionScore[]; questionScoreSummaries?: QuestionScoreSummary[]; answerSheets?: AnswerSheet[]; reportSections?: ReportSection[]; questionNotice?: string; }
-export interface LocalAccount { id: string; revision: string; label: string; providerId: string; login: string; authMode?: 'password' | 'token'; password?: string; session?: AuthSession; }
+export interface LocalAccount { id: string; revision: string; label: string; providerId: string; login: string; authMode?: 'password' | 'token'; password?: string; session?: AuthSession; selectedProfile?: StudentProfile; }
 export interface AuthSession { providerId: string; accountId: string; accessToken: string; expiresAt?: number; providerContext?: Record<string, string>; }
 export type ProviderErrorCode = 'INVALID_CREDENTIALS' | 'SESSION_EXPIRED' | 'NETWORK' | 'NOT_FOUND' | 'UNSUPPORTED' | 'RESTRICTED' | 'UNKNOWN';
 export class ProviderError extends Error { constructor(public readonly code: ProviderErrorCode, message: string, public readonly retryable = false) { super(message); this.name = 'ProviderError'; } }

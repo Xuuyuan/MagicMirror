@@ -128,6 +128,16 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(profile).toEqual({ id: '311', displayName: '林测测', schoolName: '虚构第一中学', grade: '高一' });
   });
 
+  it('列出全部绑定并切换学生后，查询上下文改为目标绑定', async () => {
+    const { provider } = setup(standardRoutes());
+    const profiles = await provider.getProfiles!(freshSession());
+    expect(profiles).toHaveLength(2);
+    expect(profiles[0]).toMatchObject({ id: '21', displayName: '林测测', providerContext: { bindingId: '21', studentId: '310' } });
+    expect(profiles[1]).toMatchObject({ id: '22', selected: true });
+    const switched = await provider.selectProfile!(freshSession(), '21');
+    expect(switched.providerContext).toMatchObject({ bindingId: '21', studentId: '310', studentName: '林测测' });
+  });
+
   it('getExamList 按每页 5 场内存切片', async () => {
     const { provider } = setup(standardRoutes());
     const page1 = await provider.getExamList(freshSession());
