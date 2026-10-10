@@ -81,6 +81,7 @@ const smallScoresSchema = z.array(z.object({
   stuAnswer: z.string().nullable().optional(), answer: z.string().nullable().optional(),
 }));
 const questionAnalysisSchema = z.array(z.object({
+  tihao: z.string().nullable().optional(), questionNo: z.string().nullable().optional(),
   type: z.union([z.number(), z.string()]), typeName: z.string(), fullScore: z.number(), myScore: z.number(),
   gradeRightRate: z.number(), gradeAvgScore: z.number(),
 }));
@@ -125,8 +126,9 @@ function questionAnalysisReport(data: z.infer<typeof questionAnalysisSchema> | u
   return [{
     id: 'haitun-question-analysis',
     title: '逐题分析',
-    items: data.map((item, index) => ({
-      label: `${item.typeName} ${index + 1}`,
+    items: data.map((item) => ({
+      // tihao 与 small-scores 的题目标识一致；合并科目数量可能不同，不能按数组下标配对。
+      label: `${item.tihao?.trim() || item.questionNo?.trim() || '题号未提供'} · ${item.typeName}`,
       values: {
         '本人得分': `${item.myScore} / ${item.fullScore}`,
         '年级均分': String(item.gradeAvgScore),

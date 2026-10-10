@@ -211,8 +211,8 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     ]);
     expect(detail.reportSections).toEqual([{
       id: 'haitun-question-analysis', title: '逐题分析', items: [
-        { label: '单选题 1', values: { '本人得分': '5 / 5', '年级均分': '4.58', '年级正确率': '91.55%' } },
-        { label: '主观题 2', values: { '本人得分': '6 / 10', '年级均分': '7', '年级正确率': '60%' } },
+        { label: '1.1 · 单选题', values: { '本人得分': '5 / 5', '年级均分': '4.58', '年级正确率': '91.55%' } },
+        { label: '2.3.1 · 主观题', values: { '本人得分': '6 / 10', '年级均分': '7', '年级正确率': '60%' } },
       ],
     }]);
     expect(detail.questions).toHaveLength(4);
@@ -224,6 +224,26 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(detail.questions?.[3]).toMatchObject({ id: '2.3.2' });
     expect(detail.questions?.[3].kind).toBeUndefined();
     expect(detail.questionNotice).toBeUndefined();
+  });
+
+  it('逐题分析按官方题号展示，乱序、合并科目和未匹配题目不会按小分下标误配', async () => {
+    const row = haitunQuestionAnalysisResponse.data[0];
+    const { provider } = setup(standardRoutes([
+      { match: '/detail', body: haitunSubjectDetailResponse },
+      { match: '/small-scores', body: okEnvelope(smallScores) },
+      { match: '/question-analysis', body: okEnvelope([
+        { ...row, tihao: '2.3.1', questionNo: '二.3.1' },
+        { ...row, tihao: '语文-1.1', questionNo: '语文-一.1' },
+        { ...row, tihao: '1.1', questionNo: '一.1' },
+        { ...row, tihao: null, questionNo: '四.5' },
+        { ...row, tihao: '', questionNo: null },
+      ]) },
+    ]));
+    const detail = await provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult());
+    expect(detail.reportSections?.[0].items?.map(item => item.label)).toEqual([
+      '2.3.1 · 单选题', '语文-1.1 · 单选题', '1.1 · 单选题', '四.5 · 单选题', '题号未提供 · 单选题',
+    ]);
+    expect(detail.questions?.map(item => item.id)).toEqual(smallScores.map(item => item.tihao));
   });
 
   it('小分缺失不阻断科目页，仅提示逐题数据不可用', async () => {

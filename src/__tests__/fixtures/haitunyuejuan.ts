@@ -42,8 +42,8 @@ export const haitunQuestionAnalysisResponse = {
   errno: 0,
   errmsg: 'ok',
   data: [
-    { type: 1, typeName: '单选题', fullScore: 5, myScore: 5, gradeRightRate: 91.55, gradeAvgScore: 4.58, video: '' },
-    { type: 2, typeName: '主观题', fullScore: 10, myScore: 6, gradeRightRate: 60, gradeAvgScore: 7, video: '' },
+    { tihao: '1.1', questionNo: '一.1', type: 1, typeName: '单选题', fullScore: 5, myScore: 5, gradeRightRate: 91.55, gradeAvgScore: 4.58, video: '' },
+    { tihao: '2.3.1', questionNo: '二.3.1', type: 2, typeName: '主观题', fullScore: 10, myScore: 6, gradeRightRate: 60, gradeAvgScore: 7, video: '' },
   ],
   traceId: 'fixture-trace-question-analysis',
 } as const;
