@@ -196,17 +196,18 @@ it('分布先显示十题，显示全部后可恢复；收起再展开也恢复�
 });
 
 it.each([true, false])('总分头部展示等级、发布时间，人数旁展示联考属性 %s', async (isUnion) => {
-  Object.assign(mockResult, { grade: 'B4', gradePercentile: '36-43%', publishedAt: '2026-05-27 10:00:00', participantCount: 512, isUnion });
+  Object.assign(mockResult, { grade: 'B4', gradePercentile: '36-43%', defeatRate: 55.2, publishedAt: '2026-05-27 10:00:00', participantCount: 512, isUnion });
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('总分B4 36-43%');
     expect(container.textContent).toContain('发布时间 2026-05-27 10:00:00');
     expect(container.textContent).toContain(`考生人数 512 人${isUnion ? '联考' : '校考'}`);
+    expect(container.textContent).toContain('击败率55.2%');
     expect(container.textContent).not.toContain('考试信息');
     expect(container.textContent).not.toContain('考试小结');
   } finally {
     delete mockResult.grade; delete mockResult.gradePercentile; delete mockResult.publishedAt;
-    delete mockResult.participantCount; delete mockResult.isUnion;
+    delete mockResult.defeatRate; delete mockResult.participantCount; delete mockResult.isUnion;
   }
 });
 

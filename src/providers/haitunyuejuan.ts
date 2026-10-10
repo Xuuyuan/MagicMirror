@@ -316,6 +316,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         ranking: rankings.find((item) => item.scope === 'grade') ?? rankings[0],
         ...(rankings.length ? { rankings } : {}),
         gradePercentile: total?.beatGrade !== null && total?.beatGrade !== undefined ? `超过${total.beatGrade}%` : undefined,
+        defeatRate: total?.beatGrade !== null && total?.beatGrade !== undefined ? total.beatGrade : undefined,
         ...(insightReport(insight) ? { reportSections: insightReport(insight) } : {}),
       };
     },
