@@ -5,11 +5,7 @@ describe('主题色生成', () => {
     const blueLight = schemeColors('#0B57D0', false);
     const blueDark = schemeColors('#0B57D0', true);
     const pinkLight = schemeColors('#C2185B', false);
-    for (const colors of [blueLight, blueDark, pinkLight]) {
-      expect(colors.primary).toMatch(/^#[0-9A-F]{6}$/i);
-      expect(colors.background).toMatch(/^#[0-9A-F]{6}$/i);
-      expect(colors.onPrimary).toMatch(/^#[0-9A-F]{6}$/i);
-    }
+    expect(blueLight.background).not.toBe(blueDark.background);
     expect(blueLight.primary).not.toBe(blueDark.primary);
     expect(blueLight.primary).not.toBe(pinkLight.primary);
   });

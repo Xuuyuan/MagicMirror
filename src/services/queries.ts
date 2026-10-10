@@ -1,10 +1,11 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
-import type { AnswerSheet, SubjectDetail } from '@/src/domain/models';
+import type { AnswerSheet, StudentProfile, SubjectDetail } from '@/src/domain/models';
 import type { ScoreProvider } from '@/src/providers/types';
 import { withAccount } from './accounts';
 import { throwIfAborted } from './http';
 
 export const accountQueryKeys = {
+  profiles: (accountId?: string, revision?: string) => ['account', accountId, revision, 'profiles'] as const,
   exams: (accountId?: string, revision?: string) => ['account', accountId, revision, 'exams'] as const,
   result: (accountId: string, revision: string | undefined, examId: string) => ['account', accountId, revision, 'result', examId] as const,
   subject: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'subject', examId, subjectId] as const,
@@ -12,6 +13,15 @@ export const accountQueryKeys = {
   watermarkedSheets: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'watermarked-sheets', examId, subjectId] as const,
   unclaimedExams: (accountId?: string, revision?: string) => ['account', accountId, revision, 'unclaimed-exams'] as const,
 };
+
+export function profilesQueryOptions(accountId: string, revision: string | undefined) {
+  return queryOptions({
+    queryKey: accountQueryKeys.profiles(accountId, revision),
+    enabled: !!revision,
+    queryFn: ({ signal }): Promise<StudentProfile[]> => withAccount(accountId, (provider, session, requestSignal) =>
+      provider.getProfiles ? provider.getProfiles(session, { signal: requestSignal }) : provider.getProfile(session, { signal: requestSignal }).then((profile) => [profile]), signal),
+  });
+}
 
 export function examResultQueryOptions(accountId: string, revision: string | undefined, examId: string) {
   return queryOptions({

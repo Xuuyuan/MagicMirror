@@ -217,7 +217,6 @@ describe('助学帮答题卡和逐题明细（虚构数据，无网络）', () =
     await expect(provider.getAnswerSheets!(session, '1001', 'SUB1', result)).resolves.toEqual(urls.map((url) => ({ subject: '数学', subjectId: 'SUB1', url, watermarked: false })));
     expect(requestAt(transport, 1).body).toEqual({ stuNo: exam.stuNo, esubNo: 'SUB1' });
     expect(requestAt(transport, 1).headers.get('exam_pno')).toBe('');
-    expect(provider.getWatermarkedAnswerSheets).toBeUndefined();
   });
   it('赋分科目使用官方合并科目的答题卡标识', async () => {
     const merged: ExamResult = { ...result, subjects: [

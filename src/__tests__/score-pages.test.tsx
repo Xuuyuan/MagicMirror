@@ -244,6 +244,19 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   expect(mockResult.subjects.map((item) => item.subject)).toEqual(originalOrder);
 });
 
+it('排名格子在名次后显示班级和学校击败率', async () => {
+  mockResult.rankings = [{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }];
+  mockResult.ranking = { scope: 'grade', rank: 40 };
+  mockResult.defeatRates = [{ scope: 'class', value: 60.5 }, { scope: 'grade', value: 55.2 }];
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('班级5击败率 60.5%');
+    expect(container.textContent).toContain('学校40击败率 55.2%');
+  } finally {
+    delete mockResult.rankings; delete mockResult.ranking; delete mockResult.defeatRates;
+  }
+});
+
 it('考试和科目详情只在主分数后显示满分，原始分不重复显示满分', async () => {
   const previous = mockSubject.providerContext;
   mockSubject.providerContext = { ...previous, originalMaxScore: '50' };
@@ -308,6 +321,7 @@ it('答题详情默认展开，收起隐藏内容，再展开恢复内容', asyn
 
 it('科目各范围排名以大字号显示名次，小字号显示总人数', async () => {
   mockSubject.statistics = [{ scope: '班级', rank: 2, participantCount: 30 }, { scope: '年级', rank: 4, participantCount: 100 }, { scope: '总排名', rank: 15, participantCount: 200 }];
+  mockSubject.defeatRates = [{ scope: 'class', value: 70.1 }, { scope: 'grade', value: 62.3 }];
   try {
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('联考排名');
@@ -315,7 +329,9 @@ it('科目各范围排名以大字号显示名次，小字号显示总人数', a
     expect(container.textContent).not.toContain('年级');
     expect(Array.from(container.querySelectorAll('[data-variant="bodySmall"]')).map(node => node.textContent)).toEqual(expect.arrayContaining(['/ 30', '/ 100', '/ 200']));
     expect(Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(node => node.textContent)).toEqual(['2', '4', '15']);
-  } finally { delete mockSubject.statistics; }
+    expect(container.textContent).toContain('击败率 70.1%');
+    expect(container.textContent).toContain('击败率 62.3%');
+  } finally { delete mockSubject.statistics; delete mockSubject.defeatRates; }
 });
 
 it('总分分数线直接显示各线分数及单位，无需展开', async () => {
