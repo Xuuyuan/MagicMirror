@@ -18,7 +18,9 @@ import { numericScore, parseValidated } from './codec';
  *   因此 refreshSession 必须把下发的 refreshToken 写回会话上下文（withAccount 负责持久化），
  *   刷新失败时外层自动回退为密码重登。
  * - 登录错误语义（实测）：手机号或密码错误 = errno 401；密码格式不符 = errno 400。
- * - 答题卡图片托管在 ossimage.haitunyuejuan.com（http），免鉴权直链，URL 即访问凭据；
+ * - 答题卡图片托管在 ossimage.haitunyuejuan.com，平台以 http 免鉴权直链下发，URL 即访问凭据；
+ *   该主机实测同样支持 https，而 Android 网络安全配置禁止明文流量（仅放行百分智），
+ *   故本端把平台自有域名的直链升级为 https 后再交给界面。
  *   官方客户端的分数标注是覆盖层渲染，原始扫描件不含，故只提供无水印版。
  */
 const host = 'https://student-api.haitunyuejuan.com';
@@ -95,6 +97,19 @@ function questionAnalysisReport(data: z.infer<typeof questionAnalysisSchema> | u
 /** 平台标识为纯数字 ID。 */
 function numericId(value: string): boolean {
   return /^\d{1,16}$/.test(value);
+}
+
+/**
+ * 平台按 http 下发答题卡直链，但 App 的 Android 网络安全配置禁止明文流量（见 plugins/with-report-network.js）。
+ * 实测平台 OSS 主机同样支持 https，因此只对平台自有域名升级 scheme；其他地址（含内嵌图片、无 scheme 值）保持原样，
+ * 避免破坏平台未来可能下发的其他形态。
+ */
+function secureImageUrl(url: string): string {
+  try {
+    const { hostname } = new URL(url);
+    if (hostname !== 'haitunyuejuan.com' && !hostname.endsWith('.haitunyuejuan.com')) return url;
+  } catch { return url; }
+  return url.replace(/^http:/i, 'https:');
 }
 
 export interface HaitunyuejuanOptions {
@@ -352,7 +367,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
       if (!numericId(subjectId)) throw new ProviderError('NOT_FOUND', '科目标识无效');
       const data = parse(answerSheetDataSchema, (await request(session, withQuery(session, `/api/student/v1/papers/${encodeURIComponent(subjectId)}/answer-sheet`), { signal: options?.signal })).data, '答题卡');
       const subject = cachedResult?.subjects.find((item) => item.id === subjectId)?.subject ?? subjectId;
-      return data.imgs.map((url) => ({ subject, subjectId, url, watermarked: false }));
+      return data.imgs.map((url) => ({ subject, subjectId, url: secureImageUrl(url), watermarked: false }));
     },
     async logout(session) { revoked.add(session); },
   };

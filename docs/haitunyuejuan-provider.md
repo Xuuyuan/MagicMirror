@@ -23,7 +23,7 @@ accessToken 为 JWT，有效期仅 900 秒；Provider 按 `expiresIn` 设置会�
 | 考试列表 | `GET /exams` | 无分页参数，Provider 在内存中按 5 场一页切片 |
 | 成绩 | `GET /exams/{examId}/subjects` | 首行为总分汇总（`subjectId=0`、科目名为空）；科目 `score` 是字符串（如 `"107.00"`）。`classRank/gradeRank` 映射名次，`beatGrade` 映射 `gradePercentile`（“超过 X%”），班级/年级均分进入科目 `providerContext` |
 | 科目明细 | `GET /exams/{examId}/subjects/{subjectId}/detail` 与 `/small-scores` | `paperBrief` 映射客观/主观题小结；小分 `tihao`（如 `1.1`、`2.15.1`）作题目标识，`questionType` `1`/`2` 映射客观/主观，客观题带 `stuAnswer`/`answer`；小分缺失不阻断科目页，仅提示 |
-| 答题卡 | `GET /papers/{subjectId}/answer-sheet` | `imgs[]` 为 `ossimage.haitunyuejuan.com` 的 **http 免鉴权直链**，URL 即访问凭据；返回 `watermarked: false`。官方客户端的分数标注（“10分/15分”等）是覆盖层渲染，原始扫描件不含，因此不提供带水印版本 |
+| 答题卡 | `GET /papers/{subjectId}/answer-sheet` | `imgs[]` 为 `ossimage.haitunyuejuan.com` 的 **http 免鉴权直链**，URL 即访问凭据；Provider 只对平台自有域名（`haitunyuejuan.com`）的直链把 scheme 升级为 https 再交给界面——App 的 Android 网络安全配置禁止明文流量（见 `plugins/with-report-network.js`，仅放行百分智），而该 OSS 主机实测同样支持 https；返回 `watermarked: false`。官方客户端的分数标注（“10分/15分”等）是覆盖层渲染，原始扫描件不含，因此不提供带水印版本 |
 
 `ranking` 能力声明为 true（班级/年级名次），但平台不提供参考人数，`Ranking.total` 保持缺失。`score-history`（跨考试趋势）与 `insight`（AI 诊断，受会员功能门控）暂未接入。
 
@@ -35,7 +35,7 @@ accessToken 为 JWT，有效期仅 900 秒；Provider 按 `expiresIn` 设置会�
 | 考试、成绩 | 本人正常可查询的考试；遵守平台会员功能门控 |
 | 名次 | 班级/年级名次（无参考人数）；`beatClass/beatGrade` 百分比保留在科目上下文 |
 | 逐题小分 | 客观题含我的作答与正确答案；主观题仅有得分 |
-| 答题卡 | http 免鉴权扫描图，无水印版 |
+| 答题卡 | 免鉴权扫描图（平台直链已升级为 https），无水印版 |
 | 趋势、AI 诊断、会员购买、写操作 | 未接入 |
 
 `code` 登录字段的用途（疑似验证码/邀请码）未确认，固定传空字符串。`member/status` 是小程序端的会员功能门控接口，Provider 不调用它，数据接口当前不要求先过该检查（非会员账号实测可取全部已接入数据）。
@@ -59,5 +59,5 @@ npx jest --runInBand --runTestsByPath src/__tests__/haitunyuejuan.live.check.ts 
 1. 添加账号，平台选择“海豚阅卷”，手机号+密码登录成功后主界面显示考试列表。
 2. 打开一场考试，核对科目、总分、满分、班级/年级名次与官方小程序一致。
 3. 进入单科，核对逐题小分题号、客观题我的答案/正确答案、客观/主观题小结；测试“只看错题”。
-4. 进入答题卡，确认 http 直链图片正常加载、页数正确；测试放大与保存。
+4. 进入答题卡，确认图片正常加载（Provider 已把平台下发的 http 直链升级为 https）、页数正确；测试放大与保存。
 5. 账号放置超过 15 分钟后再查询，确认自动刷新无感恢复（不要求重输密码）；重启 App 后会话仍可用。

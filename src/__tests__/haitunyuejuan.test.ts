@@ -262,15 +262,40 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     await expect(provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult())).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
   });
 
-  it('getAnswerSheets 返回免鉴权直链的无水印答题卡', async () => {
+  it('getAnswerSheets 返回免鉴权直链的无水印答题卡，平台自有域名升级为 https', async () => {
     const { provider, transport } = setup(standardRoutes([{ match: '/answer-sheet', body: okEnvelope(answerSheet) }]));
     const sheets = await provider.getAnswerSheets!(freshSession(), '9001', '8101', cachedResult());
     expect(sheets).toHaveLength(2);
     expect(sheets[0]).toMatchObject({ subject: '数学', subjectId: '8101', watermarked: false });
-    expect(sheets[0].url).toBe(answerSheet.imgs[0]);
+    // 平台下发 http，Android 网络策略禁止明文流量，Provider 统一升级为 https。
+    expect(sheets.map((sheet) => sheet.url)).toEqual([
+      'https://ossimage.haitunyuejuan.com/fake-000001.jpg',
+      'https://ossimage.haitunyuejuan.com/fake-000002.jpg',
+    ]);
     expect(sheets[0].headers).toBeUndefined();
     const [call] = transport.mock.calls as unknown as [[string, RequestInit]];
     expect(call[0]).toContain('/papers/8101/answer-sheet?studentBindingId=22&studentId=311');
+  });
+
+  it('答题卡直链只为平台自有域名升级 https，其他地址保持平台下发的原样', async () => {
+    const mixed = {
+      imgs: [
+        'http://ossimage.haitunyuejuan.com/fake-000003.jpg',
+        'https://ossimage.haitunyuejuan.com/fake-000004.jpg',
+        'http://cdn.example.com/fake-000005.jpg',
+        'data:image/jpeg;base64,ZmFrZQ==',
+        'fake-000006.jpg',
+      ],
+    };
+    const { provider } = setup(standardRoutes([{ match: '/answer-sheet', body: okEnvelope(mixed) }]));
+    const sheets = await provider.getAnswerSheets!(freshSession(), '9001', '8101', cachedResult());
+    expect(sheets.map((sheet) => sheet.url)).toEqual([
+      'https://ossimage.haitunyuejuan.com/fake-000003.jpg',
+      'https://ossimage.haitunyuejuan.com/fake-000004.jpg',
+      'http://cdn.example.com/fake-000005.jpg',
+      'data:image/jpeg;base64,ZmFrZQ==',
+      'fake-000006.jpg',
+    ]);
   });
 
   it('数据接口 errno 401 与 HTTP 401 都映射为会话过期', async () => {
