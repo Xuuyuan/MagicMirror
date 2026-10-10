@@ -144,9 +144,9 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(result.totalScore).toBe(200);
     expect(result.maxTotalScore).toBe(250);
     expect(result.gradePercentile).toBe('超过55.2%');
-    // 总人数由名次与击败率反推：班级 5/(1-60.5%)≈13，年级 40/(1-55.2%)≈89。
-    expect(result.ranking).toEqual({ scope: 'grade', rank: 40, total: 89 });
-    expect(result.rankings).toEqual([{ scope: 'class', rank: 5, total: 13 }, { scope: 'grade', rank: 40, total: 89 }]);
+    // 平台没有下发参考人数；击败率不能反推出官方精确人数。
+    expect(result.ranking).toEqual({ scope: 'grade', rank: 40 });
+    expect(result.rankings).toEqual([{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }]);
     expect(result.subjects).toHaveLength(2);
     expect(result.subjects[0]).toMatchObject({ id: '8101', subject: '数学', score: 120, maxScore: 150 });
     expect(result.subjects[0].providerContext).toMatchObject({ classAvgScore: '105.5', gradeAvgScore: '98.2', beatClass: '70.1', beatGrade: '62.3' });
@@ -183,8 +183,8 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(detail.score).toBe(120);
     expect(detail.maxScore).toBe(150);
     expect(detail.statistics).toEqual([
-      { scope: '班级', averageScore: 105.5, rank: 4, participantCount: 13 },
-      { scope: '年级', averageScore: 98.2, rank: 33, participantCount: 88 },
+      { scope: '班级', averageScore: 105.5, rank: 4 },
+      { scope: '年级', averageScore: 98.2, rank: 33 },
     ]);
     expect(detail.questionScoreSummaries).toEqual([
       { kind: 'objective', score: 60, maxScore: 70 },

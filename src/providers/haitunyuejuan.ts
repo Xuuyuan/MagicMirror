@@ -75,18 +75,6 @@ function numericId(value: string): boolean {
   return /^\d{1,16}$/.test(value);
 }
 
-/**
- * 由名次与击败率反推参考人数：击败率是「被自己超过的考生占比」，
- * 即 (总人数 − 名次) / 总人数，因此 总人数 ≈ 名次 / (1 − 击败率)。
- * 击败率接近 1 时分母过小不可靠；结果小于名次说明数据不一致，保持缺失。
- */
-function estimateTotal(rank: number | null | undefined, beat: number | null | undefined): number | undefined {
-  if (typeof rank !== 'number' || rank < 1) return undefined;
-  if (typeof beat !== 'number' || !Number.isFinite(beat) || beat < 0 || beat >= 99) return undefined;
-  const total = Math.round(rank / (1 - beat / 100));
-  return total >= rank ? total : undefined;
-}
-
 export interface HaitunyuejuanOptions {
   transport?: FetchTransport;
 }
@@ -224,11 +212,11 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
       const total = rows.find((row) => row.subjectId === 0 || row.subjectName === '');
       const subjects = rows.filter((row) => row.subjectId !== 0 && row.subjectName !== '');
       const rankings: Ranking[] = ([
-        { scope: 'class' as const, rank: total?.classRank, total: estimateTotal(total?.classRank, total?.beatClass) },
-        { scope: 'grade' as const, rank: total?.gradeRank, total: estimateTotal(total?.gradeRank, total?.beatGrade) },
-      ] satisfies { scope: 'class' | 'grade'; rank?: number | null; total?: number }[])
+        { scope: 'class' as const, rank: total?.classRank },
+        { scope: 'grade' as const, rank: total?.gradeRank },
+      ] satisfies { scope: 'class' | 'grade'; rank?: number | null }[])
         .flatMap((item) => typeof item.rank === 'number'
-          ? [{ scope: item.scope, rank: item.rank, ...(item.total !== undefined ? { total: item.total } : {}) }]
+          ? [{ scope: item.scope, rank: item.rank }]
           : []);
       const subjectScores: SubjectScore[] = subjects.map((row) => {
         const context: Record<string, string> = {};
@@ -282,9 +270,9 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         return kind ? [{ kind, score: row.score, maxScore: row.fullScore }] : [];
       });
       const statistics: SubjectStatistic[] = [
-        { scope: '班级', averageScore: detail.classAvgScore ?? undefined, rank: detail.classRank ?? undefined, participantCount: estimateTotal(detail.classRank, detail.beatClass) },
-        { scope: '年级', averageScore: detail.gradeAvgScore ?? undefined, rank: detail.gradeRank ?? undefined, participantCount: estimateTotal(detail.gradeRank, detail.beatGrade) },
-      ].filter((item) => item.averageScore !== undefined || item.rank !== undefined || item.participantCount !== undefined);
+        { scope: '班级', averageScore: detail.classAvgScore ?? undefined, rank: detail.classRank ?? undefined },
+        { scope: '年级', averageScore: detail.gradeAvgScore ?? undefined, rank: detail.gradeRank ?? undefined },
+      ].filter((item) => item.averageScore !== undefined || item.rank !== undefined);
       return {
         subjectId, subject: detail.subjectName,
         score: numericScore(detail.score), maxScore: detail.fullScore ?? undefined,
