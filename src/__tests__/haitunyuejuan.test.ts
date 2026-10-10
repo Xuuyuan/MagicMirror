@@ -254,6 +254,34 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(detail.questionNotice).toContain('逐题小分');
   });
 
+  it('拆分卷（无逐题数据）：分段得分为 null 时不再报结构错误，只保留分数与统计', async () => {
+    const splitDetail = {
+      ...subjectDetail,
+      paperBrief: [
+        { questionNo: '客观题', tihao: null, score: null, fullScore: 58, questionType: '1' },
+        { questionNo: '主观题', tihao: null, score: null, fullScore: 92, questionType: '2' },
+      ],
+    };
+    const { provider } = setup(standardRoutes([
+      { match: '/detail', body: okEnvelope(splitDetail) },
+      { match: '/small-scores', body: okEnvelope([]) },
+      { match: '/question-analysis', body: okEnvelope([]) },
+    ]));
+    const detail = await provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult());
+    expect(detail.subject).toBe('数学');
+    expect(detail.score).toBe(120);
+    expect(detail.maxScore).toBe(150);
+    expect(detail.statistics).toEqual([
+      { scope: '班级', averageScore: 105.5, rank: 4 },
+      { scope: '年级', averageScore: 98.2, rank: 33 },
+    ]);
+    // 没有得分的分段小结不生成，避免展示 0 分之类的错误信息。
+    expect(detail.questionScoreSummaries).toBeUndefined();
+    expect(detail.questions).toEqual([]);
+    expect(detail.questionNotice).toBe('本场考试未提供逐题数据。');
+    expect(detail.reportSections).toBeUndefined();
+  });
+
   it('小分接口出现会话失效时仍抛统一会话错误，不被兜底吞掉', async () => {
     const { provider } = setup(standardRoutes([
       { match: '/detail', body: okEnvelope(subjectDetail) },

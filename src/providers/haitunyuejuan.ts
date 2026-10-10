@@ -22,6 +22,8 @@ import { numericScore, parseValidated } from './codec';
  *   该主机实测同样支持 https，而 Android 网络安全配置禁止明文流量（仅放行百分智），
  *   故本端把平台自有域名的直链升级为 https 后再交给界面。
  *   官方客户端的分数标注是覆盖层渲染，原始扫描件不含，故只提供无水印版。
+ * - 拆分卷（无逐题数据）实测：`paperBrief[].score` 为 null、`small-scores` 与 `question-analysis`
+ *   返回空数组，但科目分数、名次与均分完整；这些形态按“没有该项数据”降级，不报结构错误。
  */
 const host = 'https://student-api.haitunyuejuan.com';
 // 实测：服务端当前不校验 UA；与项目负责人约定固定为小程序抓包 UA，避免后续风控收紧。
@@ -54,8 +56,9 @@ const subjectRowSchema = z.object({
   classAvgScore: z.number().nullable().optional(), gradeAvgScore: z.number().nullable().optional(),
   beatClass: z.number().nullable().optional(), beatGrade: z.number().nullable().optional(),
 });
+// 分段得分在平台不公布时为 null（如实测的拆分卷：客观/主观题只有满分）；满分与题型仍然完整。
 const paperBriefRowSchema = z.object({
-  questionNo: z.string(), score: z.number(), fullScore: z.number(), questionType: z.string(),
+  questionNo: z.string(), score: z.number().nullable(), fullScore: z.number(), questionType: z.string(),
 });
 const subjectDetailSchema = subjectRowSchema.extend({ paperBrief: z.array(paperBriefRowSchema).optional() });
 const smallScoresSchema = z.array(z.object({
@@ -341,7 +344,8 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
       });
       const summaries = detail.paperBrief?.flatMap((row) => {
         const kind = row.questionType === '1' ? 'objective' as const : row.questionType === '2' ? 'subjective' as const : undefined;
-        return kind ? [{ kind, score: row.score, maxScore: row.fullScore }] : [];
+        // 平台未公布分段得分时跳过该行：没有得分的“小结”只会误导。
+        return kind && row.score !== null ? [{ kind, score: row.score, maxScore: row.fullScore }] : [];
       });
       const reportSections = questionAnalysisReport(questionAnalysis);
       const statistics: SubjectStatistic[] = [
@@ -360,7 +364,8 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         ...(questions ? { questions } : {}),
         ...(summaries?.length ? { questionScoreSummaries: summaries } : {}),
         ...(reportSections ? { reportSections } : {}),
-        questionNotice: questions?.length ? undefined : '平台未提供本场科目的逐题小分。',
+        // 空数组是平台明确表示本场考试没有逐题数据（如实测的拆分卷）；请求失败才提示可能缺少权限。
+        questionNotice: questions?.length ? undefined : smallScores ? '本场考试未提供逐题数据。' : '平台未提供本场科目的逐题小分。',
       };
     },
     async getAnswerSheets(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions) {

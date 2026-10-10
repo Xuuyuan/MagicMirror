@@ -22,7 +22,7 @@ accessToken 为 JWT，有效期仅 900 秒；Provider 按 `expiresIn` 设置会�
 | 学生信息 | `GET /students` | 取默认绑定；学校、年级来自绑定信息 |
 | 考试列表 | `GET /exams` | 无分页参数，Provider 在内存中按 5 场一页切片 |
 | 成绩 | `GET /exams/{examId}/subjects` | 首行为总分汇总（`subjectId=0`、科目名为空）；科目 `score` 是字符串（如 `"107.00"`）。`classRank/gradeRank` 映射名次，`beatGrade` 映射 `gradePercentile`（“超过 X%”），班级/年级均分进入科目 `providerContext` |
-| 科目明细 | `GET /exams/{examId}/subjects/{subjectId}/detail` 与 `/small-scores` | `paperBrief` 映射客观/主观题小结；小分 `tihao`（如 `1.1`、`2.15.1`）作题目标识，`questionType` `1`/`2` 映射客观/主观，客观题带 `stuAnswer`/`answer`；小分缺失不阻断科目页，仅提示 |
+| 科目明细 | `GET /exams/{examId}/subjects/{subjectId}/detail` 与 `/small-scores` | `paperBrief` 映射客观/主观题小结；小分 `tihao`（如 `1.1`、`2.15.1`）作题目标识，`questionType` `1`/`2` 映射客观/主观，客观题带 `stuAnswer`/`answer`；小分缺失不阻断科目页，仅提示。拆分卷（无逐题数据）实测：`paperBrief[].score` 为 `null`、`/small-scores` 与 `/question-analysis` 返回空数组，科目分数/名次/均分仍完整——Provider 跳过没有得分的分段小结，页面只显示分数、统计与“本场考试未提供逐题数据”提示 |
 | 答题卡 | `GET /papers/{subjectId}/answer-sheet` | `imgs[]` 为 `ossimage.haitunyuejuan.com` 的 **http 免鉴权直链**，URL 即访问凭据；Provider 只对平台自有域名（`haitunyuejuan.com`）的直链把 scheme 升级为 https 再交给界面——App 的 Android 网络安全配置禁止明文流量（见 `plugins/with-report-network.js`，仅放行百分智），而该 OSS 主机实测同样支持 https；返回 `watermarked: false`。官方客户端的分数标注（“10分/15分”等）是覆盖层渲染，原始扫描件不含，因此不提供带水印版本 |
 
 `ranking` 能力声明为 true（班级/年级名次），但平台不提供参考人数，`Ranking.total` 保持缺失。`score-history`（跨考试趋势）与 `insight`（AI 诊断，受会员功能门控）暂未接入。
@@ -34,7 +34,7 @@ accessToken 为 JWT，有效期仅 900 秒；Provider 按 `expiresIn` 设置会�
 | 登录、学生信息 | 手机号密码登录；默认选择官方标记的学生，可在首页切换绑定学生 |
 | 考试、成绩 | 本人正常可查询的考试；遵守平台会员功能门控 |
 | 名次 | 班级/年级名次（无参考人数）；`beatClass/beatGrade` 百分比保留在科目上下文 |
-| 逐题小分 | 客观题含我的作答与正确答案；主观题仅有得分 |
+| 逐题小分 | 客观题含我的作答与正确答案；主观题仅有得分；拆分卷没有逐题数据，页面只提示不报错 |
 | 答题卡 | 免鉴权扫描图（平台直链已升级为 https），无水印版 |
 | 趋势、AI 诊断、会员购买、写操作 | 未接入 |
 
@@ -42,7 +42,7 @@ accessToken 为 JWT，有效期仅 900 秒；Provider 按 `expiresIn` 设置会�
 
 ## 验证与复现
 
-离线检查为 `npm run lint`、`npm run typecheck`、`npm test`。`src/__tests__/haitunyuejuan.test.ts` 使用虚构信息覆盖登录/刷新/错误映射、总分汇总行、字符串分数、题型映射、小分缺失降级、答题卡直链、会话注销与注册能力真实性。
+离线检查为 `npm run lint`、`npm run typecheck`、`npm test`。`src/__tests__/haitunyuejuan.test.ts` 使用虚构信息覆盖登录/刷新/错误映射、总分汇总行、字符串分数、题型映射、小分缺失降级、拆分卷（分段得分为 null、逐题接口为空）降级、答题卡直链、会话注销与注册能力真实性。
 
 人工联网检查位于 `src/__tests__/haitunyuejuan.live.check.ts`，默认不运行。只在本人账号授权下，将 `HAITUN_ACCOUNT`、`HAITUN_PASSWORD` 放入当前进程环境，再执行：
 
