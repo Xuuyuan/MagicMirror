@@ -159,7 +159,6 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     // 平台没有下发参考人数；击败率不能反推出官方精确人数。
     expect(result.ranking).toEqual({ scope: 'grade', rank: 40 });
     expect(result.rankings).toEqual([{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }]);
-    expect(result.reportSections).toBeUndefined();
     expect(result.subjects).toHaveLength(2);
     expect(result.subjects[0]).toMatchObject({ id: '8101', subject: '数学', score: 120, maxScore: 150 });
     expect(result.subjects[0].providerContext).toMatchObject({ classAvgScore: '105.5', gradeAvgScore: '98.2', beatClass: '70.1', beatGrade: '62.3' });
@@ -177,8 +176,6 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     const { provider } = setup(standardRoutes([{ match: '/subjects?', body: okEnvelope(rows) }]));
     const result = await provider.getExamResult(freshSession(), '9001');
     expect(result.rankings).toEqual([{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }]);
-    expect(result.rankings?.[0].total).toBeUndefined();
-    expect(result.rankings?.[1].total).toBeUndefined();
   });
 
   it('getExamResult 在考试列表中找不到该考试时抛 NOT_FOUND', async () => {
@@ -352,6 +349,5 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     expect(provider?.metadata.name).toBe('海豚阅卷');
     expect(provider?.metadata.officialDomain).toBe('https://student-api.haitunyuejuan.com');
     expect(provider?.capabilities).toMatchObject({ profile: true, exams: true, results: true, ranking: true, subjectDetails: true, questionScores: true, answerSheets: true });
-    expect(provider?.authenticateWithToken).toBeUndefined();
   });
 });

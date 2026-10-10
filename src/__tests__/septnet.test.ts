@@ -311,7 +311,8 @@ describe('Septnet Provider（无网络）', () => {
       providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10', ruCode: 'FICTIONAL-RU-CODE' } };
     const { provider, transport } = setup([
       sealed(subjects),
-      sealed({ answerUrls: ['https://static.example.invalid/fictional/answer-marked-1.png'], isWatermark: true }),
+      // 响应回显 isWatermark=false：水印标记只能来自请求参数，传错或不传就会失败。
+      sealed({ answerUrls: ['https://static.example.invalid/fictional/answer-marked-1.png'], isWatermark: false }),
     ]);
     expect(await provider.getWatermarkedAnswerSheets!(session, 'EXAM-0001-AAAA', '语文')).toEqual([
       { subject: '语文', url: 'https://static.example.invalid/fictional/answer-marked-1.png', watermarked: true },

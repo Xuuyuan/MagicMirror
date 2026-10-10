@@ -1,5 +1,9 @@
 import { createRuiyaProvider } from '@/src/providers/ruiya';
 import { bfzksProvider } from '@/src/providers/bfzks';
+import { clearPlatformCookies } from '../services/platform-cookies';
+
+// 测试环境没有 react-native 的 Cookie 容器；用桩断言注销时确实调用了清理逻辑。
+jest.mock('../services/platform-cookies', () => ({ clearPlatformCookies: jest.fn(async () => undefined) }));
 
 const loginPage = '<input name="__VIEWSTATE" value="VIEW"/><input name="__VIEWSTATEGENERATOR" value="GEN"/><input name="__EVENTVALIDATION" value="EVENT"/>';
 const reportList = '<a href="/report/singleGroup/REPORT123">虚构报告</a>';
@@ -118,10 +122,17 @@ describe('Ruiya Provider', () => {
   });
 
   it('clears the platform cookie container when a 百分智 session is revoked', async () => {
+    const clear = jest.mocked(clearPlatformCookies);
+    clear.mockClear();
     const provider = createRuiyaProvider(async () => response(report), { host: 'https://www.bfzks.com', providerId: 'bfzks', platformLabel: '百分智', allowedHosts: ['xueqingroom.cn'], platformCookieJar: true });
     const bfzksSession = { providerId: 'bfzks', accountId: 'fictional', accessToken: 'ASP.NET_SessionId=fictional', providerContext: { cookie: 'ASP.NET_SessionId=fictional', host: 'http://bfzks.xueqingroom.cn' } };
     await provider.logout(bfzksSession);
+    expect(clear).toHaveBeenCalledTimes(1);
     await expect(provider.getExamResult(bfzksSession, 'REPORT123')).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+    // 会话 Cookie 由请求头自带（如睿芽）时不触碰平台容器。
+    clear.mockClear();
+    await createRuiyaProvider(async () => response(report)).logout(session);
+    expect(clear).not.toHaveBeenCalled();
   });
 
   it('maps raw and scaled scores without inventing a maximum score', async () => {

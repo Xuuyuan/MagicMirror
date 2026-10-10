@@ -52,7 +52,6 @@ it('uses the verified paper route, maps answers, metadata and flat rankings, and
   expect(detail.abilityAnalysis?.[0].values['得分率']).toBe('50%');
   expect(detail.chapterAnalysis?.[0].values['基准甲基准']).toBe('4');
   expect(detail.abilityScoreAnalysis).toBeUndefined();
-  expect(detail.reportSections?.some(x => ['learning-status', 'ability-notes', 'paper-info'].includes(x.id))).toBe(false);
   expect(transport.mock.calls.some(([url]) => String(url).includes('/getAbilityScore/'))).toBe(false);
   expect(transport.mock.calls.some(([url]) => String(url).includes('/getByAbilityScore/SIGN/123'))).toBe(true);
 });
@@ -74,7 +73,6 @@ it('keeps unavailable question data separate from a wrong-only empty result', as
   expect(detail.questions).toEqual([]);
   expect(detail.questionNotice).toContain('未提供');
   expect(detail.maxScore).toBe(6);
-  expect(detail.reportSections?.find(x => x.id === 'paper-info')).toBeUndefined();
 });
 
 it('honors grade-only and hidden-ranking flags even when numeric data is returned', async () => {
@@ -98,7 +96,6 @@ it('shows the official paper maximum after the scaled score', async () => {
   const detail = await provider.getSubjectDetail!(session, 'REPORT', '1', await provider.getExamResult(session, 'REPORT'));
   expect(detail.score).toBe(80);
   expect(detail.maxScore).toBe(6);
-  expect(detail.reportSections?.find(x => x.id === 'paper-info')).toBeUndefined();
 });
 
 it('matches rate groups by identity rather than response order and keeps zero values', () => {

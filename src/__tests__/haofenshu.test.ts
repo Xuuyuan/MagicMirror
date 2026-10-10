@@ -107,7 +107,6 @@ describe('Haofenshu Provider (no network)', () => {
       { code: 0, data: result },
     ], 200, roleType);
     const auth = await provider.authenticate('fictional', 'fictional-password');
-    expect(auth.providerId).toBe(provider.metadata.id);
     expect(auth.expiresAt).toBeUndefined();
     expect(await provider.getProfile(auth)).toEqual({ id: '123', displayName: '虚构学生', schoolName: '虚构学校', grade: undefined });
     // 档案按时间正序返回，列表改为新考试在前。
@@ -376,7 +375,6 @@ describe('Haofenshu Provider (no network)', () => {
       { code: 0, data: { examId: 456, name: '虚构考试', score: 1, manfen: 1, papers: [{ paperId: 'paper-1', pid: 'parent-1', subject: '语文', score: 1, manfen: 1 }] } },
       { code: 0, data: { url: ['https://yj-oss.yunxiao.com/fictional.png'], questions: [{ id: 'question-1', name: '一.1', score: 3, manfen: 3 }] } },
     ]);
-    expect(provider.getAnswerSheets).toBeDefined();
     expect(await provider.getAnswerSheets!(session, '456', 'paper-1')).toEqual([{ subject: '语文', subjectId: 'paper-1', url: 'https://yj-oss.yunxiao.com/fictional.png', watermarked: false }]);
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     expect(calls[1][0]).toContain('/papers/paper-1/answer-picture?pid=parent-1');

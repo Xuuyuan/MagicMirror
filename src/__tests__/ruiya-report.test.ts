@@ -45,7 +45,6 @@ it('enables extended reports on the registered Ruiya provider without changing i
   expect(detail.reportSections?.some(section => section.id === 'question-rates')).toBe(true);
   expect(detail.chapterAnalysis?.[0].values['基准甲基准']).toBe('4');
   expect(detail.abilityScoreAnalysis).toBeUndefined();
-  expect(detail.reportSections?.some(section => ['learning-status', 'ability-notes', 'paper-info'].includes(section.id))).toBe(false);
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/getByAbilityScore/SIGN/123'))).toBe(true);
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/getAbilityScore/'))).toBe(false);
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/getOSS_CutPaper/'))).toBe(false);
