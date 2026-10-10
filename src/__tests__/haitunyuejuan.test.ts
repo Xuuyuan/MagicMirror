@@ -1,6 +1,7 @@
 import { createHaitunyuejuanProvider } from '@/src/providers/haitunyuejuan';
 import type { AuthSession, ExamResult } from '@/src/domain/models';
 import { providerRegistry } from '@/src/providers/registry';
+import { haitunInsightResponse, haitunQuestionAnalysisResponse, haitunSubjectDetailResponse } from './fixtures/haitunyuejuan';
 
 // 全部为虚构数据（仅结构与真实响应一致），不含任何真实账号信息。
 const okEnvelope = (data: unknown) => ({ errno: 0, errmsg: 'ok', data, traceId: 'trace-fixture' });
@@ -22,14 +23,6 @@ const subjectRows = [
   { examId: 9001, subjectId: 8101, subjectName: '数学', score: '120.00', fullScore: 150, classRank: 4, gradeRank: 33, classAvgScore: 105.5, gradeAvgScore: 98.2, beatClass: 70.1, beatGrade: 62.3, beatUnion: null },
   { examId: 9001, subjectId: 8102, subjectName: '物理', score: '80.00', fullScore: 100, classRank: 6, gradeRank: 51, classAvgScore: 72.3, gradeAvgScore: 70.8, beatClass: 55.0, beatGrade: 48.7, beatUnion: null },
 ];
-const insight = {
-  examId: 9001,
-  total: { score: 200, fullScore: 250, classRank: '5', gradeRank: '40', beatClass: 60.5, beatGrade: 55.2 },
-  oneLine: '本次总分 200/250 分，物理是最该补的一科。',
-  focus: { subjectId: 8102, subjectName: '物理', subjectType: 'OTHER', lostScore: 20, scoreRate: 80, text: '物理是本次提分空间最大的一科。' },
-  improvePriority: [{ subjectId: 8102, subjectName: '物理', subjectType: 'OTHER', lostScore: 20, scoreRate: 80 }],
-  subjectMap: [{ subjectId: 8101, subjectName: '数学', subjectType: 'OTHER', score: 120, fullScore: 150, scoreRate: 80, lostScore: 30, level: 'risk' }],
-};
 const subjectDetail = {
   examId: 9001, subjectId: 8101, subjectName: '数学', score: '120.00', fullScore: 150,
   classRank: 4, gradeRank: 33, classAvgScore: 105.5, gradeAvgScore: 98.2,
@@ -44,10 +37,6 @@ const smallScores = [
   { tihao: '1.2', questionType: '1', score: 0, fullScore: 5, stuAnswer: 'A', answer: 'B' },
   { tihao: '2.3.1', questionType: '2', score: 6, fullScore: 10, stuAnswer: '', answer: '' },
   { tihao: '2.3.2', questionType: '9', score: 2, fullScore: 4, stuAnswer: '', answer: '' },
-];
-const questionAnalysis = [
-  { type: 1, typeName: '单选题', fullScore: 5, myScore: 5, gradeRightRate: 91.55, gradeAvgScore: 4.58, video: '' },
-  { type: 2, typeName: '主观题', fullScore: 10, myScore: 6, gradeRightRate: 60, gradeAvgScore: 7, video: '' },
 ];
 const answerSheet = { imgs: ['http://ossimage.haitunyuejuan.com/fake-000001.jpg', 'http://ossimage.haitunyuejuan.com/fake-000002.jpg'], sizes: [[100, 100]] };
 
@@ -150,7 +139,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
   });
 
   it('getExamResult：总分汇总行映射总分与名次，科目行映射分数与班级/年级均分', async () => {
-    const { provider } = setup(standardRoutes([{ match: '/insight', body: okEnvelope(insight) }]));
+    const { provider } = setup(standardRoutes([{ match: '/insight', body: haitunInsightResponse }]));
     const result = await provider.getExamResult(freshSession(), '9001');
     expect(result.examName).toBe('虚构月考一');
     expect(result.totalScore).toBe(200);
@@ -204,9 +193,9 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
 
   it('getSubjectDetail：小分映射客观/主观题型与作答，paperBrief 映射小结，均分映射统计', async () => {
     const { provider } = setup(standardRoutes([
-      { match: '/detail', body: okEnvelope(subjectDetail) },
+      { match: '/detail', body: haitunSubjectDetailResponse },
       { match: '/small-scores', body: okEnvelope(smallScores) },
-      { match: '/question-analysis', body: okEnvelope(questionAnalysis) },
+      { match: '/question-analysis', body: haitunQuestionAnalysisResponse },
     ]));
     const detail = await provider.getSubjectDetail!(freshSession(), '9001', '8101', cachedResult());
     expect(detail.subject).toBe('数学');
