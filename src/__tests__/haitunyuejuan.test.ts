@@ -22,6 +22,14 @@ const subjectRows = [
   { examId: 9001, subjectId: 8101, subjectName: '数学', score: '120.00', fullScore: 150, classRank: 4, gradeRank: 33, classAvgScore: 105.5, gradeAvgScore: 98.2, beatClass: 70.1, beatGrade: 62.3, beatUnion: null },
   { examId: 9001, subjectId: 8102, subjectName: '物理', score: '80.00', fullScore: 100, classRank: 6, gradeRank: 51, classAvgScore: 72.3, gradeAvgScore: 70.8, beatClass: 55.0, beatGrade: 48.7, beatUnion: null },
 ];
+const insight = {
+  examId: 9001,
+  total: { score: 200, fullScore: 250, classRank: '5', gradeRank: '40', beatClass: 60.5, beatGrade: 55.2 },
+  oneLine: '本次总分 200/250 分，物理是最该补的一科。',
+  focus: { subjectId: 8102, subjectName: '物理', subjectType: 'OTHER', lostScore: 20, scoreRate: 80, text: '物理是本次提分空间最大的一科。' },
+  improvePriority: [{ subjectId: 8102, subjectName: '物理', subjectType: 'OTHER', lostScore: 20, scoreRate: 80 }],
+  subjectMap: [{ subjectId: 8101, subjectName: '数学', subjectType: 'OTHER', score: 120, fullScore: 150, scoreRate: 80, lostScore: 30, level: 'risk' }],
+};
 const subjectDetail = {
   examId: 9001, subjectId: 8101, subjectName: '数学', score: '120.00', fullScore: 150,
   classRank: 4, gradeRank: 33, classAvgScore: 105.5, gradeAvgScore: 98.2,
@@ -138,7 +146,7 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
   });
 
   it('getExamResult：总分汇总行映射总分与名次，科目行映射分数与班级/年级均分', async () => {
-    const { provider } = setup(standardRoutes());
+    const { provider } = setup(standardRoutes([{ match: '/insight', body: okEnvelope(insight) }]));
     const result = await provider.getExamResult(freshSession(), '9001');
     expect(result.examName).toBe('虚构月考一');
     expect(result.totalScore).toBe(200);
@@ -147,9 +155,26 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     // 平台没有下发参考人数；击败率不能反推出官方精确人数。
     expect(result.ranking).toEqual({ scope: 'grade', rank: 40 });
     expect(result.rankings).toEqual([{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }]);
+    expect(result.reportSections).toEqual([{
+      id: 'haitun-insight', title: '考试小结',
+      notes: ['本次总分 200/250 分，物理是最该补的一科。', '物理是本次提分空间最大的一科。'],
+      highlights: [
+        { label: '重点科目', value: '物理' },
+        { label: '重点科目得分率', value: '80', unit: '%' },
+        { label: '重点科目丢分', value: '20', unit: '分' },
+      ],
+      highlightColumns: 3,
+      items: [{ label: '数学', values: { '得分': '120 / 150', '得分率': '80%', '丢分': '30分' } }],
+    }]);
     expect(result.subjects).toHaveLength(2);
     expect(result.subjects[0]).toMatchObject({ id: '8101', subject: '数学', score: 120, maxScore: 150 });
     expect(result.subjects[0].providerContext).toMatchObject({ classAvgScore: '105.5', gradeAvgScore: '98.2', beatClass: '70.1', beatGrade: '62.3' });
+  });
+
+  it('考试洞察接口失败时不阻断成绩结果', async () => {
+    const { provider } = setup(standardRoutes([{ match: '/insight', status: 500, body: { errno: 500, data: null } }]));
+    const result = await provider.getExamResult(freshSession(), '9001');
+    expect(result.reportSections).toBeUndefined();
   });
 
   it('总分满分缺失时按各科满分加和', async () => {

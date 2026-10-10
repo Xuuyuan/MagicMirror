@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
   ProviderError, type AuthSession, type QuestionScore,
-  type Ranking, type SubjectScore, type SubjectStatistic,
+  type Ranking, type ReportSection, type SubjectScore, type SubjectStatistic,
 } from '../domain/models';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
@@ -45,6 +45,26 @@ const bindingsSchema = z.array(z.object({
 const examsSchema = z.array(z.object({
   examId: z.number().int(), examName: z.string().min(1), beginTime: z.string().optional(),
 }));
+const insightSchema = z.object({
+  examId: z.number().int(),
+  total: z.object({
+    score: z.number(), fullScore: z.number(),
+    classRank: z.union([z.number(), z.string()]).nullable().optional(),
+    gradeRank: z.union([z.number(), z.string()]).nullable().optional(),
+    beatClass: z.number().nullable().optional(), beatGrade: z.number().nullable().optional(),
+  }).optional(),
+  oneLine: z.string().optional(),
+  focus: z.object({
+    subjectName: z.string(), lostScore: z.number(), scoreRate: z.number(), text: z.string(),
+  }).optional(),
+  improvePriority: z.array(z.object({
+    subjectName: z.string(), lostScore: z.number(), scoreRate: z.number(),
+  })).optional(),
+  subjectMap: z.array(z.object({
+    subjectName: z.string(), score: z.number(), fullScore: z.number(), scoreRate: z.number(),
+    lostScore: z.number(), level: z.string(),
+  })).optional(),
+});
 const subjectRowSchema = z.object({
   subjectId: z.number().int(), subjectName: z.string(),
   score: z.string(), fullScore: z.number().nullable().optional(),
@@ -68,6 +88,32 @@ function parse<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
 
 function defaultBinding(bindings: z.infer<typeof bindingsSchema>): z.infer<typeof bindingsSchema>[number] | undefined {
   return bindings.find((item) => item.default === 1) ?? bindings[0];
+}
+
+function insightReport(data: z.infer<typeof insightSchema> | undefined): ReportSection[] | undefined {
+  if (!data) return undefined;
+  const focus = data.focus;
+  const priorities = data.improvePriority ?? [];
+  const subjects = data.subjectMap ?? [];
+  const notes = [data.oneLine, focus?.text].filter((value): value is string => !!value);
+  const items = subjects.length
+    ? subjects
+    : priorities.map((item) => ({ ...item, score: undefined, fullScore: undefined }));
+  const reportItems = items.map((item) => ({
+    label: item.subjectName,
+    values: {
+      '得分': `${item.score ?? '—'}${item.fullScore !== undefined ? ` / ${item.fullScore}` : ''}`,
+      '得分率': `${item.scoreRate}%`,
+      '丢分': `${item.lostScore}分`,
+    },
+  }));
+  const highlights = focus ? [
+    { label: '重点科目', value: focus.subjectName },
+    { label: '重点科目得分率', value: String(focus.scoreRate), unit: '%' },
+    { label: '重点科目丢分', value: String(focus.lostScore), unit: '分' },
+  ] : undefined;
+  if (!notes.length && !reportItems.length && !highlights?.length) return undefined;
+  return [{ id: 'haitun-insight', title: '考试小结', notes, highlights, highlightColumns: highlights?.length === 3 ? 3 : undefined, items: reportItems }];
 }
 
 /** 平台标识为纯数字 ID。 */
@@ -206,6 +252,13 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         request(session, withQuery(session, '/api/student/v1/exams'), { signal: options?.signal }).then((body) => parse(examsSchema, body.data, '考试列表')),
         request(session, withQuery(session, `/api/student/v1/exams/${encodeURIComponent(examId)}/subjects`), { signal: options?.signal }).then((body) => parse(z.array(subjectRowSchema), body.data, '科目成绩')),
       ]);
+      const insight = await request(session, withQuery(session, `/api/student/v1/exams/${encodeURIComponent(examId)}/insight`), { signal: options?.signal })
+        .then((body) => parse(insightSchema, body.data, '考试洞察'))
+        .catch((error: unknown) => {
+          throwIfAborted(options?.signal);
+          if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;
+          return undefined;
+        });
       const exam = exams.find((item) => String(item.examId) === examId);
       if (!exam) throw new ProviderError('NOT_FOUND', '在最近的考试中没有找到该考试');
       // 首行是总分汇总（subjectId=0、科目名为空），其余为科目行。
@@ -241,6 +294,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         ranking: rankings.find((item) => item.scope === 'grade') ?? rankings[0],
         ...(rankings.length ? { rankings } : {}),
         gradePercentile: total?.beatGrade !== null && total?.beatGrade !== undefined ? `超过${total.beatGrade}%` : undefined,
+        ...(insightReport(insight) ? { reportSections: insightReport(insight) } : {}),
       };
     },
     async getSubjectDetail(session, examId, subjectId, _cachedResult, options?: ProviderRequestOptions) {
