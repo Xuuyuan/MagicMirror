@@ -17,7 +17,9 @@ import { numericScore, parseValidated } from './codec';
  * - accessToken 有效期仅 900 秒；refreshToken 为一次性令牌，刷新后旧令牌立即作废，
  *   因此 refreshSession 必须把下发的 refreshToken 写回会话上下文（withAccount 负责持久化），
  *   刷新失败时外层自动回退为密码重登。
- * - 登录错误语义（实测）：手机号或密码错误 = errno 401；密码格式不符 = errno 400。
+ * - 登录错误语义（实测）：手机号或密码错误 = errno 401（映射为凭据错误）；密码长度或手机号格式不符 = errno 400。
+ * - 业务错误（errno ∉ {0, 401}）把平台 errmsg 作为用户可见提示，空白或缺失时回退通用文案；
+ *   只有网络层错误才不透出原文或响应内容。
  * - 答题卡图片托管在 ossimage.haitunyuejuan.com，平台以 http 免鉴权直链下发，URL 即访问凭据；
  *   该主机实测同样支持 https，而 Android 网络安全配置禁止明文流量（仅放行百分智），
  *   故本端把平台自有域名的直链升级为 https 后再交给界面。
@@ -74,6 +76,16 @@ const answerSheetDataSchema = z.object({ imgs: z.array(z.string().min(1)) });
 
 function parse<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   return parseValidated(schema, raw, `海豚阅卷${label}结构不符合预期`);
+}
+
+const genericBusinessMessage = '海豚阅卷暂时无法完成此请求';
+
+/**
+ * 平台业务提示直接带给用户（仅去首尾空白并限长）：同一个 errno 可以承载不同原因，
+ * 例如实测 errno 400 既有「密码长度需 6~20 位」也有「手机号格式不正确」，按码翻译会丢信息。
+ */
+function businessMessage(errmsg: string | undefined): string {
+  return errmsg?.trim().slice(0, 60) || genericBusinessMessage;
 }
 
 function defaultBinding(bindings: z.infer<typeof bindingsSchema>): z.infer<typeof bindingsSchema>[number] | undefined {
@@ -161,7 +173,7 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         if (envelope.data.errno === 0) return { data: envelope.data.data };
         // 平台把「登录已失效」「刷新令牌无效」等会话问题统一编码为 errno 401。
         if (envelope.data.errno === 401) throw new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
-        throw new ProviderError('UNKNOWN', '海豚阅卷暂时无法完成此请求');
+        throw new ProviderError('UNKNOWN', businessMessage(envelope.data.errmsg));
       }
       if (response.status === 401 || response.status === 403) throw new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
       if (response.status === 429) throw new ProviderError('UNSUPPORTED', '请求受到频率限制，请稍后再试');
@@ -195,9 +207,10 @@ export function createHaitunyuejuanProvider(options: HaitunyuejuanOptions = {}):
         method: 'POST',
         body: JSON.stringify({ phone: account.trim(), password, code: '' }),
       }).catch((error: unknown) => {
-        // 实测：手机号或密码错误时平台返回 errno 401；对登录而言这是凭据问题而非会话过期。
-        if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') {
-          throw new ProviderError('INVALID_CREDENTIALS', '手机号或密码不正确');
+        // 实测：手机号或密码错误 = errno 401，密码长度或手机号格式不符 = errno 400；
+        // 登录接口上的业务错误（UNKNOWN）都属于凭据或输入问题，errmsg 已由 request 带入消息。
+        if (error instanceof ProviderError && (error.code === 'SESSION_EXPIRED' || error.code === 'UNKNOWN')) {
+          throw new ProviderError('INVALID_CREDENTIALS', error.code === 'SESSION_EXPIRED' ? '手机号或密码不正确' : error.message);
         }
         throw error;
       });

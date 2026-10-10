@@ -96,6 +96,23 @@ describe('海豚阅卷 Provider（无网络，虚构数据）', () => {
     await expect(provider.authenticate('13800000000', 'bad-password')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
   });
 
+  it('登录 errno 400（密码长度/手机号格式）按平台 errmsg 提示为凭据问题', async () => {
+    const { provider } = setup([{ match: '/auth/login', body: { errno: 400, errmsg: '密码长度需 6~20 位', data: null } }]);
+    await expect(provider.authenticate('13800000000', '123')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS', message: '密码长度需 6~20 位' });
+  });
+
+  it('业务错误展示平台 errmsg，空白或缺失时回退通用文案并限长', async () => {
+    const withMessage = setup([{ match: '/students', body: { errno: 500, errmsg: '  虚构业务提示，请稍后再试  ', data: null } }]);
+    await expect(withMessage.provider.getProfile(freshSession())).rejects.toMatchObject({ code: 'UNKNOWN', message: '虚构业务提示，请稍后再试' });
+    for (const errmsg of [undefined, '   ']) {
+      const empty = setup([{ match: '/students', body: { errno: 500, ...(errmsg === undefined ? {} : { errmsg }), data: null } }]);
+      await expect(empty.provider.getProfile(freshSession())).rejects.toMatchObject({ code: 'UNKNOWN', message: '海豚阅卷暂时无法完成此请求' });
+    }
+    const long = setup([{ match: '/students', body: { errno: 500, errmsg: '长'.repeat(200), data: null } }]);
+    const error = await long.provider.getProfile(freshSession()).catch((value: unknown) => value);
+    expect((error as { message: string }).message).toHaveLength(60);
+  });
+
   it('空账号或空密码直接拒绝，不发请求', async () => {
     const { provider, transport } = setup([]);
     await expect(provider.authenticate('  ', 'x')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
