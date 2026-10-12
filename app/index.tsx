@@ -7,7 +7,7 @@ import { useAccounts } from '@/src/accounts-context';
 import { withAccount } from '@/src/services/accounts';
 import { hasMoreExamPages, mergeExamPages } from '@/src/services/exams';
 import { profilesQueryOptions, unclaimedExamsQueryOptions } from '@/src/services/queries';
-import { selectedStudentIndex, studentProviderLabel } from '@/src/services/students';
+import { selectedStudentIndex, studentProviderLabel, studentSwitcherVisible } from '@/src/services/students';
 import { providerRegistry } from '@/src/providers/registry';
 import { useAppStore } from '@/src/state/app';
 import { Screen, Header, Card, Body, ErrorCard, LoadingState, Badge, showToast } from '@/src/ui';
@@ -50,6 +50,8 @@ function BoundStudentSwitcher({ accountId, revision }: { accountId: string; revi
   const profiles = useQuery(profilesQueryOptions(accountId, revision));
   const [visible, setVisible] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 只有一个学生（或还没有绑定学生）时没有可切换的对象，不显示入口；守卫放在所有 hooks 之后。
+  if (!studentSwitcherVisible(profiles.data, profiles.isPending)) return null;
   const selectedId = active?.selectedProfile?.id;
   const selected = profiles.data?.[selectedStudentIndex(profiles.data, selectedId)];
   return <Menu visible={visible} onDismiss={() => setVisible(false)} statusBarHeight={0} anchorPosition="bottom" anchor={<Appbar.Action icon="account-child-outline" accessibilityLabel={selected ? `切换学生，当前${selected.displayName}` : '切换学生'} onPress={() => setVisible(true)} />}>

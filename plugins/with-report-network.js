@@ -19,6 +19,14 @@ module.exports = function withReportNetwork(config) {
   <debug-overrides><trust-anchors><certificates src="user" /></trust-anchors></debug-overrides>
 </network-security-config>
 `);
+    const debugDirectory = path.join(mod.modRequest.platformProjectRoot, 'app/src/debug/res/xml');
+    fs.mkdirSync(debugDirectory, { recursive: true });
+    fs.writeFileSync(path.join(debugDirectory, 'report_network_security.xml'), `<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+  <debug-overrides><trust-anchors><certificates src="user" /></trust-anchors></debug-overrides>
+</network-security-config>
+`);
     return mod;
   }]);
 };

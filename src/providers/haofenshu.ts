@@ -13,11 +13,20 @@ const id = z.union([z.string().min(1), z.number().int().safe().nonnegative()]);
 const tokenSchema = z.string().regex(/^[A-Za-z0-9._~+=/-]+$/);
 const numeric = z.preprocess((value) => typeof value === 'string' && value.trim() !== '' ? Number(value) : value, z.number().finite());
 const envelope = z.object({ code: z.preprocess((value) => typeof value === 'string' ? Number(value) : value, z.number().int()), data: z.unknown().optional(), msg: z.string().optional() });
-const loginSchema = z.object({ token: tokenSchema, needUpdatePassword: z.boolean().optional() });
+const loginSchema = z.object({ token: tokenSchema, needUpdatePassword: z.boolean().optional(), studentId: id.optional() });
 const profileSchema = z.object({ roleType: z.union([z.number(), z.string()]).optional(), linkedStudent: z.object({
   studentId: id, studentName: z.string().min(1), schoolName: z.string().optional(), grade: z.string().optional(),
   isVirtual: z.union([z.number(), z.string()]).optional(),
 }).nullable() });
+// /v2/user-center/related-students（家长版关联学生，2026-10-12 实测）：行字段含 studentName/studentId/linkedTime/
+// changeBindTime/grade/class/schoolName/schoolId/isVirtual/kaohao/xuehao（字段名是 class，不是 className）；
+// studentId 与 user-snapshot 一样是 24 位带前导零的字符串；列表本身没有“当前学生”标记。
+const relatedStudentsSchema = z.array(z.object({
+  studentId: z.union([z.string().min(1), z.number()]),
+  studentName: z.string().min(1), schoolName: z.string().optional(), grade: z.string().optional(),
+}));
+// 「切换学生成功」带 studentName，「无需切换」只有 studentId；两者都是 code=0。
+const switchResultSchema = z.object({ studentId: id.optional() }).nullish();
 // /v4/exam/archives（考试档案）：官方新版客户端获取全部考试的端点，一次返回当前年级全部考试（无分页参数）。
 const archivesSchema = z.object({
   list: z.array(z.object({
@@ -61,6 +70,11 @@ function parse<T>(schema: z.ZodType<T>, raw: unknown, stage = '响应'): T {
 
 function displayRankValue(value: string | number | null | undefined): string | undefined {
   return value === undefined || value === null ? undefined : String(value);
+}
+
+/** 学生 ID 是带前导零的长数字串：只做字符串归一化，不能经过 Number（前导零与精度都会丢）。 */
+function studentIdText(value: string | number): string {
+  return typeof value === 'string' ? value : String(value);
 }
 
 function normalizeV4Overview(value: z.infer<typeof v4OverviewSchema>): Overview {
@@ -192,9 +206,11 @@ function answerPictureRoute(examId: string, paperId: string, pid: string): strin
   return `/v3/exam/${encodeURIComponent(examId)}/papers/${encodeURIComponent(paperId)}/answer-picture?pid=${encodeURIComponent(pid)}`;
 }
 
-function businessError(code: number): ProviderError {
+function businessError(code: number, message?: string): ProviderError {
   if (code >= 3001 && code <= 3006) return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
   if ([4006, 4046].includes(code)) return new ProviderError('INVALID_CREDENTIALS', '账号、密码或所选账号类型不正确');
+  // 4108 只来自切换学生：平台原因已经写清楚（实测「要切换的学生未绑定到当前用户」），直接带给用户。
+  if (code === 4108) return new ProviderError('NOT_FOUND', message?.trim() || '未找到该绑定学生');
   if ([10, 11, 12, 13, 14, 2001, 2002, 4048].includes(code)) {
     return new ProviderError('UNSUPPORTED', '请在官方 App 完成必要验证或检查访问权限');
   }
@@ -222,13 +238,21 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
   const providerId = roleType === 1 ? 'haofenshu-student' : 'haofenshu-parent';
   // Weak references invalidate handed-out sessions locally without retaining their tokens.
   const revoked = new WeakSet<AuthSession>();
-  // /v4/exam/archives（考试档案，官方 H5 形态）缓存：按会话隔离——同一 Provider 可能有多个账号，缓存绝不能互串；
+  // /v4/exam/archives（考试档案，官方 H5 形态）缓存：按「会话 + 当前学生」隔离——同一 Provider 可能有多个账号，
+  // 且切换学生时 Cookie 不变、档案里的分数与名次会变，缓存绝不能互串；
   // 一次返回全部考试，分页在内存中切片；排名展示串（考试级与单科级）也从这里取。
   const archivesTtlMs = 15 * 60_000;
   const archivesCache = new Map<string, { data: z.infer<typeof archivesSchema>; at: number }>();
+  /** 当前学生是账号级服务端状态（官方 App 也能改），会话令牌相同不代表数据相同。 */
+  function archivesKey(session: AuthSession): string {
+    return `${session.accessToken}:${session.providerContext?.['studentId'] ?? ''}`;
+  }
   function archivesFor(session: AuthSession): { data: z.infer<typeof archivesSchema>; at: number } | undefined {
-    const cached = archivesCache.get(session.accessToken);
+    const cached = archivesCache.get(archivesKey(session));
     return cached !== undefined && Date.now() - cached.at <= archivesTtlMs ? cached : undefined;
+  }
+  function dropArchives(session: AuthSession): void {
+    archivesCache.delete(archivesKey(session));
   }
   // 统一按官方 H5（mobile.haofenshu.com 页面）的形态请求：浏览器 UA 尾缀 HFS_XS/HFS_JZ（Constants.java：W=HFS_XS，X=HFS_JZ）
   // + hfs-token + 浏览器请求头。实测同一会话下，H5 形态登录创建的会话只接受 H5 形态请求。
@@ -272,9 +296,11 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
       }
       if (body.code === 1 && body.data == null) {
         if (route.startsWith('/v4/exam/archives?')) return { list: [] };
+        // code=1 是「成功但没有数据」（官方 isSuccess 含 1）：未绑定孩子的家长在关联列表上就是这一形态。
+        if (route.startsWith('/v2/user-center/related-students')) return [];
         throw new ProviderError('NOT_FOUND', '该接口暂未提供数据');
       }
-      if (body.code !== 0) throw businessError(body.code);
+      if (body.code !== 0) throw businessError(body.code, body.msg);
       return body.data;
     } catch (error) {
       throwIfAborted(init.signal);
@@ -290,7 +316,7 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
     // 每次真正发起考试档案请求前先访问一次官方配置接口；命中本地缓存时不重复探测。
     await probeRestriction(session, options);
     const data = parse(archivesSchema, await request(session, '/v4/exam/archives?grade=', { signal: options?.signal }), '考试档案');
-    archivesCache.set(session.accessToken, { data, at: Date.now() });
+    archivesCache.set(archivesKey(session), { data, at: Date.now() });
     // 会话是低频长命对象，正常不会积累；超过上限时清理最旧的，防御异常使用方式。
     if (archivesCache.size > 8) for (const key of [...archivesCache.keys()].slice(0, archivesCache.size - 8)) archivesCache.delete(key);
     return data;
@@ -301,6 +327,21 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
       throwIfAborted(options?.signal);
       // 探测本身被同一风控拦截时，仍由上层展示原始受限状态。
       if (!(error instanceof ProviderError)) return;
+    }
+  }
+  /**
+   * 当前学生以服务端 user-snapshot 为准：切换是**账号级**状态（2026-10-12 实测：用密码新建的会话直接落在上次切换到的学生，
+   * 而关联列表本身不带“当前”标记），官方 App 也能改，本地会话上下文只是记录。
+   * 会话失效/受限照常抛出交给统一恢复链路；其余错误降级为“当前学生未知”，不阻断学生列表。
+   */
+  async function currentStudentId(session: AuthSession, options?: ProviderRequestOptions): Promise<string | undefined> {
+    try {
+      const data = parse(profileSchema, await request(session, '/v2/user-center/user-snapshot', { signal: options?.signal }), '学生信息');
+      return data.linkedStudent ? studentIdText(data.linkedStudent.studentId) : undefined;
+    } catch (error) {
+      throwIfAborted(options?.signal);
+      if (error instanceof ProviderError && (error.code === 'SESSION_EXPIRED' || error.code === 'RESTRICTED')) throw error;
+      return undefined;
     }
   }
 
@@ -336,14 +377,18 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
       }), '登录');
       if (data.needUpdatePassword) throw new ProviderError('UNSUPPORTED', '请先在官方 App 完成账号安全操作');
       // Historical cookie Max-Age is not a promise about this session's lifetime.
-      return { providerId, accountId: account.trim(), accessToken: data.token };
+      // 登录响应带当前学生：直接种进会话上下文，档案缓存从一开始就按学生隔离（重登未必回到默认绑定学生）。
+      return {
+        providerId, accountId: account.trim(), accessToken: data.token,
+        ...(data.studentId === undefined ? {} : { providerContext: { studentId: studentIdText(data.studentId) } }),
+      };
     },
     async authenticateWithToken(token) {
       if (!tokenSchema.safeParse(token.trim()).success) throw new ProviderError('INVALID_CREDENTIALS', '请输入有效的好分数 Token');
       const session = { providerId, accountId: 'token-login', accessToken: token.trim() };
       const profile = parse(profileSchema, await request(session, '/v2/user-center/user-snapshot'), '学生信息');
       if (!profile.linkedStudent) throw new ProviderError('UNSUPPORTED', '请先在官方 App 绑定学生');
-      return { ...session, accountId: String(profile.linkedStudent.studentId) };
+      return { ...session, accountId: String(profile.linkedStudent.studentId), providerContext: { studentId: studentIdText(profile.linkedStudent.studentId) } };
     },
     async getProfile(session, options?: ProviderRequestOptions) {
       const data = parse(profileSchema, await request(session, '/v2/user-center/user-snapshot', { signal: options?.signal }), '学生信息');
@@ -351,6 +396,35 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
       return { id: String(data.linkedStudent.studentId), displayName: data.linkedStudent.studentName,
         schoolName: data.linkedStudent.schoolName, grade: data.linkedStudent.grade };
     },
+    // 家长版才有多个孩子；学生版（roleType=1）没有这两个端点的验证样本，先不暴露切换能力。
+    ...(roleType === 2 ? {
+      async getProfiles(session: AuthSession, options?: ProviderRequestOptions) {
+        const rows = parse(relatedStudentsSchema, await request(session, '/v2/user-center/related-students', { signal: options?.signal }), '关联学生');
+        const profiles = rows.map((row) => ({
+          id: studentIdText(row.studentId), displayName: row.studentName, schoolName: row.schoolName, grade: row.grade,
+        }));
+        // 没有可切换的对象时不需要判定“当前是谁”，也就不必再请求 user-snapshot。
+        if (profiles.length < 2) return profiles;
+        const current = await currentStudentId(session, options);
+        // 与服务端不一致（例如在官方 App 里切换过）：本会话的档案缓存已经过期，顺手清掉。
+        if (current !== undefined && current !== session.providerContext?.['studentId']) dropArchives(session);
+        return profiles.map((profile) => ({ ...profile, selected: profile.id === current }));
+      },
+      async selectProfile(session: AuthSession, profileId: string, options?: ProviderRequestOptions) {
+        if (!/^\d{1,32}$/.test(profileId)) throw new ProviderError('NOT_FOUND', '学生标识无效');
+        // 当前学生是账号级服务端状态，切换后会话令牌不变（实测：响应即使带 Set-Cookie，值与请求令牌也相同）。
+        const data = await request(session, '/v2/user-center/sessions', {
+          method: 'POST', body: JSON.stringify({ deviceType: 1, studentId: profileId }), signal: options?.signal,
+        });
+        // 「切换学生成功」与「无需切换」都是 code=0；回显了学生就核对，避免静默未生效却记成本地已切换。
+        const echoed = switchResultSchema.safeParse(data);
+        if (echoed.success && echoed.data?.studentId !== undefined && studentIdText(echoed.data.studentId) !== profileId) {
+          throw new ProviderError('UNKNOWN', '切换学生未生效，请重试');
+        }
+        dropArchives(session);
+        return { ...session, providerContext: { ...session.providerContext, studentId: profileId } };
+      },
+    } : {}),
     async getExamList(session, page = {}, options?: ProviderRequestOptions) {
       const start = page.offset ?? 0;
       if (!Number.isSafeInteger(start) || start < 0) throw new ProviderError('UNKNOWN', '分页参数无效');
@@ -384,7 +458,7 @@ export function createHaofenshuProvider(roleType: 1 | 2, transport: FetchTranspo
       } catch {
         throwIfAborted(options?.signal);
         // 档案是可选补充；补拉失败使用同一会话旧缓存，仍可展示已取得的 overview。
-        archives = archivesCache.get(session.accessToken)?.data;
+        archives = archivesCache.get(archivesKey(session))?.data;
       }
       const entry = archives?.list.find((exam) => String(exam.examId) === examId);
       // 档案还按科目带单科排名（papers[].list[].id 即该科 pid）；屏蔽（**）的串不进入上下文。

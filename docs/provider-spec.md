@@ -8,7 +8,9 @@ Base64、UTF-8 字节编解码与 RSA（EME-PKCS1-v1_5）公钥加密等跨平�
 
 Provider 可选提供 `authenticateWithToken`，账号编辑页据此显示 Token 登录入口。好分数使用官方 `https://hfs-be.yunxiao.com` 的学生信息接口验证 Token，并校验响应结构和绑定学生；验证成功后才保存账号。输入值为本人官方请求头 `hfs-token` 或 Cookie `hfs-session-id` 的值，不是整段请求头。
 
-好分数 Provider 请求按端点分两套官方形态：v4 端点（考试档案 `/v4/exam/archives`，2026-10 起考试列表的唯一来源）使用官方 H5/WebView 形态——浏览器 UA 尾缀 `HFS_XSversion`/`HFS_JZversion` + `hfs-token` + `Origin`/`Referer` 等完整浏览器头，与官方内嵌页面请求同构；其余端点使用官方原生形态——`deviceType`/`appType`/`versionName` 头 + UA `YX Android <系统版本>`，认证只靠 Cookie。官方把被风控锁定的会话伪装成 `code=1`「无数据」；Provider 按 `msg` 关键词识别为访问限制，不自动重新登录，界面引导用户使用官方 H5 登录页处理。官方在浏览成绩页时会上报行为事件（`POST /v3/action/behaviors`），MagicMirror 不伪造此类事件。
+Provider 可选提供 `getProfiles` / `selectProfile`，支持同一账号下切换学生；账号密码不重复保存。首页右上角的学生入口只在**绑定多个学生**时显示（列表为空或只有一个学生时隐藏；首次加载尚未取到列表时不显示，读取失败时保留入口以便重试），首页平台标签沿用同一条“>1 才显示序号”的规则。`selectProfile` 返回的会话里若当前学生信息有变化，Provider 写进 `AuthSession.providerContext`（该字段会被持久化，并在重登恢复时按账号保存的选择重放）。需要按学生隔离缓存数据的平台（如好分数的 15 分钟考试档案缓存）必须把当前学生纳入缓存键：平台的当前学生状态可能不是会话级（好分数实测：切换后 Cookie 不变、新建会话直接落在上次切换到的学生）。
+
+好分数 Provider 的全部请求（登录、`user-center`、`v3`/`v4` 成绩端点、切换学生）统一使用官方 H5/WebView 形态：浏览器 UA 尾缀 `HFS_XSversion`/`HFS_JZversion` + `hfs-token` + `hfs-session-id` Cookie + `Origin`/`Referer` 等完整浏览器头，与官方内嵌页面请求同构；不要混用原生客户端形态（`deviceType`/`appType`/`versionName` 头 + UA `YX Android <系统版本>`，认证只靠 Cookie），也不要自行拼接未知头。官方把被风控锁定的会话伪装成 `code=1`「无数据」；Provider 按 `msg` 关键词识别为访问限制，不自动重新登录，界面引导用户使用官方 H5 登录页处理。官方在浏览成绩页时会上报行为事件（`POST /v3/action/behaviors`），MagicMirror 不伪造此类事件。
 
 好分数排名使用官方展示串 `classRankS`/`gradeRankS`/`groupRankS`（区间 `1~20/42人`、等级 `A`~`E`、屏蔽 `**`），等级带按官方百分比规则配合考生人数换算为区间，经 `Ranking.rankMax` 表达；考试列表的 `*RankPart` 备用字母（overview 不含）与区间取交集缩小范围、在屏蔽时单独兜底（Provider 内存缓存字母，15 分钟内有效）；数值字段 `classRank` 等恒为 `-1` 哨兵，不得采用。题目分析详情接口（`question-detail`）受服务端权益门控（`show=0` 只返回 1 道预览题），在权益为全量前不得接入。逐题得分（answer-picture）无门控，题目按 `type` 区分客观/主观（`QuestionScore.kind`），客观题带 `myAnswer`/`answer`。
 

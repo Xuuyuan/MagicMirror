@@ -11,6 +11,11 @@ jest.mock('expo-secure-store', () => {
 
 const base: LocalAccount = { id: 'fictional-account', revision: 'r1', label: '虚构', providerId: 'haofenshu-parent', login: 'fictional', authMode: 'token', session: { providerId: 'haofenshu-parent', accountId: 'fictional', accessToken: 'TEST_TOKEN' } };
 afterEach(() => jest.restoreAllMocks());
+/** 好分数家长版登录后会列出绑定学生；这些用例只关心账号服务，替身掉真实网络请求。 */
+function stubProfileLookup() {
+  const provider = providerRegistry.get('haofenshu-parent')!;
+  jest.spyOn(provider, 'getProfiles').mockResolvedValue([]);
+}
 
 it('persists token mode in secure storage and stops reusing a confirmed expired token', async () => {
   await accountStorage.save(base);
@@ -25,6 +30,7 @@ it('preserves the saved password when an account is edited with a blank password
   await accountStorage.save({ ...base, authMode: 'password', password: 'fictional-password' });
   const provider = providerRegistry.get(base.providerId)!;
   const login = jest.spyOn(provider, 'authenticate').mockResolvedValue(base.session!);
+  stubProfileLookup();
   const account = await authenticateAccount({ id: base.id, label: base.label, providerId: base.providerId, login: base.login, password: '' });
   expect(login).toHaveBeenCalledWith(base.login, 'fictional-password');
   expect(account.password).toBe('fictional-password');
@@ -34,6 +40,7 @@ it('replaces a token without retaining the old password', async () => {
   await accountStorage.save({ ...base, authMode: 'password', password: 'fictional-password' });
   const provider = providerRegistry.get(base.providerId)!;
   jest.spyOn(provider, 'authenticateWithToken').mockResolvedValue({ ...base.session!, accessToken: 'NEW_TEST_TOKEN' });
+  stubProfileLookup();
   const account = await authenticateAccount({ id: base.id, label: base.label, providerId: base.providerId, login: base.login, token: 'NEW_TEST_TOKEN' });
   expect(account.authMode).toBe('token');
   expect(account.password).toBeUndefined();

@@ -62,7 +62,13 @@ npm run build:debug
 npm run build:release
 ```
 
-调试版输出 `dist/MagicMirror-<版本号>-debug.apk`，使用 Android 自动生成的 debug 签名，运行时需连接 Metro。发布版依次执行 lint、类型检查、离线测试、版本一致性检查、Android 构建、正式签名和签名校验；终端提示时输入发布密钥密码，输出 `dist/MagicMirror-<版本号>-signed.apk`。两者默认只构建 ARM64，并输出 SHA-256。
+调试版输出 `dist/MagicMirror-<版本号>-debug.apk`，使用 Android 自动生成的 debug 签名，运行时需连接 Metro。发布版依次执行 lint、类型检查、离线测试、版本一致性检查、Android 构建、正式签名和签名校验；按架构组各输出一个包（`-arm64-v8a-signed`、`-x86_64-signed`、`-all-signed`），并输出各自的 SHA-256。App 检查更新时会按设备架构挑选对应的包，取不到架构信息时回退 `all` 包。签名密码只在构建开始前提示一次，全部架构共用；若已设置 `ANDROID_KEYSTORE_PASSWORD` 与 `ANDROID_KEY_PASSWORD` 环境变量则不再提示，两个密码不同时请用这种方式提供。
+
+| 架构组 | ABI |
+| --- | --- |
+| `arm64-v8a` | arm64-v8a |
+| `x86_64` | x86_64 |
+| `all` | arm64-v8a, armeabi-v7a, x86, x86_64 |
 
 默认复用 `%USERPROFILE%\AndroidSigning\magicmirror-release.p12`，密钥别名为 `magicmirror`。密码不写入脚本、Git 或日志；校验通过后才替换同名发布包。请长期备份并复用同一份发布密钥。
 
@@ -78,10 +84,11 @@ npm run check
 # 重建生成的 Android 工程后再签名打包
 npm run build:release -- -Clean
 
-# 构建包含所有 ABI 的包
-npm run build:release -- -Architectures all
+# 只构建指定架构组（逗号分隔可写多个）
+npm run build:release -- -Architectures arm64-v8a
+npm run build:release -- -Architectures arm64-v8a,x86_64,all
 
-# MuMu 的 x86_64 调试包
+# MuMu 的 x86_64 调试包（调试包只支持单一架构组，仍是单文件）
 npm run build:debug -- -Architectures x86_64
 ```
 

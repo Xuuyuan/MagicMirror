@@ -1,6 +1,17 @@
-const { withGradleProperties } = require('@expo/config-plugins');
+const { withGradleProperties, withMainApplication } = require('@expo/config-plugins');
 
 module.exports = function withReleaseBuild(config) {
+  config = withMainApplication(config, (mod) => {
+    const source = mod.modResults.contents;
+    if (!source.includes('useDevSupport = BuildConfig.DEBUG')) {
+      const anchor = 'context = applicationContext,';
+      if (source.split(anchor).length !== 2) {
+        throw new Error('Cannot locate the Expo ReactHost context in MainApplication.');
+      }
+      mod.modResults.contents = source.replace(anchor, `${anchor}\n      useDevSupport = BuildConfig.DEBUG,`);
+    }
+    return mod;
+  });
   return withGradleProperties(config, (mod) => {
     const properties = {
       'android.enableMinifyInReleaseBuilds': 'true',
