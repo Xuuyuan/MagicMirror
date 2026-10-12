@@ -68,6 +68,8 @@ $buildTask = if ($DebugBuild) { 'assembleDebug' } else { 'assembleRelease' }
 $gradleArguments = @($buildTask, "--no-daemon")
 if ($Architectures -ne "all") {
     $gradleArguments += "-PreactNativeArchitectures=$Architectures"
+} else {
+    $gradleArguments += '-PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86,x86_64'
 }
 $gradleJvmOptions = @()
 

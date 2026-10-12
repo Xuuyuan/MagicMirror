@@ -1,14 +1,16 @@
 import Constants from 'expo-constants';
 import { Alert, Image, Linking, View } from 'react-native';
-import { Text, useTheme } from 'react-native-paper';
+import { Button, Text, useTheme } from 'react-native-paper';
 import { Body, Card, Header, Screen } from '@/src/ui';
 import { NavigationCard } from '@/src/navigation-card';
+import { useUpdates } from '@/src/update-provider';
 
 const projectUrl = 'https://github.com/Xuuyuan/MagicMirror';
 const licenseUrl = 'https://github.com/Xuuyuan/MagicMirror?tab=Apache-2.0-1-ov-file';
 
 export default function About() {
   const theme = useTheme();
+  const { checking, checkForUpdates } = useUpdates();
 
   async function openLink(url: string) {
     try {
@@ -31,6 +33,15 @@ export default function About() {
           <Text variant="bodyMedium" style={{ textAlign: 'left' }}>
             本项目遵循 <Text accessibilityRole="link" style={{ color: theme.colors.primary, textDecorationLine: 'underline' }} onPress={() => void openLink(licenseUrl)}>Apache-2.0 license</Text>{' 开源。'}
           </Text>
+        </Card>
+        <Card>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontWeight: '700' }}>检查更新</Text>
+              <Text variant="bodySmall">通过 GitHub 获取最新版本</Text>
+            </View>
+            <Button compact loading={checking} disabled={checking} onPress={() => void checkForUpdates()}>立即检查</Button>
+          </View>
         </Card>
         <NavigationCard
           title="GitHub"

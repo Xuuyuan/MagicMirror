@@ -15,6 +15,7 @@
     },
     "android": {
       "versionCode": 7,
+      "permissions": ["android.permission.REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#F2F5FC",
         "foregroundImage": "./assets/android-icon-foreground.png",
