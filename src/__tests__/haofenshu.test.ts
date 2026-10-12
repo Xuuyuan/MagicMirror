@@ -399,3 +399,108 @@ describe('Haofenshu Provider (no network)', () => {
     expect((transport.mock.calls as unknown as [string, RequestInit][]).filter(([url]) => url.includes('/answer-picture')).length).toBe(2);
   });
 });
+
+// 全部为虚构数据（仅结构与平台返回一致）：家长版关联学生、当前学生切换与档案缓存的隔离。
+describe('好分数家长版多学生切换', () => {
+  const studentA = '000000000000000000000021';
+  const studentB = '000000000000000000000022';
+  const related = [
+    { studentName: '林测测', studentId: studentA, schoolName: '虚构第一中学', grade: '高三' },
+    { studentName: '林试试', studentId: studentB, schoolName: '虚构第一中学', grade: '高三' },
+  ];
+  const archivesOf = (name: string) => ({ list: [{ examId: 456, name }], papers: [] });
+  const ownSession = (studentId?: string): AuthSession => ({
+    providerId: 'haofenshu-parent', accountId: 'fictional', accessToken: 'TEST_TOKEN',
+    ...(studentId === undefined ? {} : { providerContext: { studentId } }),
+  });
+  const calledUrls = (transport: jest.Mock) => (transport.mock.calls as unknown as [string][]).map(([url]) => url);
+  const archivesCalls = (transport: jest.Mock) => calledUrls(transport).filter((url) => url.includes('/v4/exam/archives?grade=')).length;
+
+  it('只有一个关联学生时不再请求 user-snapshot（没有可切换对象，也就不需要判定当前学生）', async () => {
+    const { provider, transport } = setup([{ code: 0, data: [related[0]] }]);
+    expect(await provider.getProfiles!(ownSession())).toEqual([{ id: studentA, displayName: '林测测', schoolName: '虚构第一中学', grade: '高三' }]);
+    expect(calledUrls(transport)).toEqual(['https://hfs-be.yunxiao.com/v2/user-center/related-students']);
+  });
+
+  it('未绑定孩子时把官方的 code=1 当作空列表，而不是报错', async () => {
+    const { provider } = setup([{ code: 1, data: null }]);
+    expect(await provider.getProfiles!(ownSession())).toEqual([]);
+  });
+
+  it('列出关联学生并按服务端 user-snapshot 标记当前学生（本地记录不作数）', async () => {
+    const { provider } = setup([
+      { code: 0, data: related },
+      { code: 0, data: { roleType: 2, linkedStudent: { studentId: studentB, studentName: '林试试' } } },
+    ]);
+    const profiles = await provider.getProfiles!(ownSession(studentA));
+    expect(profiles.map((profile) => profile.id)).toEqual([studentA, studentB]);
+    // 本地记的是 A、服务端当前是 B（当前学生是账号级状态，官方 App 也能改）：以服务端为准。
+    expect(profiles.map((profile) => profile.selected)).toEqual([false, true]);
+  });
+
+  it('发现本地当前学生与服务端不一致时清掉档案缓存', async () => {
+    const { provider, transport } = setup([
+      { code: 0, data: archivesOf('旧档案') },
+      { code: 0, data: related },
+      { code: 0, data: { linkedStudent: { studentId: studentB, studentName: '林试试' } } },
+      { code: 0, data: archivesOf('新档案') },
+    ]);
+    const local = ownSession(studentA);
+    expect(await provider.getExamList(local)).toEqual([{ id: '456', name: '旧档案' }]);
+    await provider.getProfiles!(local);
+    expect(await provider.getExamList(local)).toEqual([{ id: '456', name: '新档案' }]);
+    expect(archivesCalls(transport)).toBe(2);
+  });
+
+  it('切换学生只改服务端状态：携带 deviceType 与 studentId，会话令牌不变', async () => {
+    const { provider, transport } = setup([{ code: 0, data: { studentId: studentB, studentName: '林试试' } }]);
+    const switched = await provider.selectProfile!(ownSession(), studentB);
+    const [call] = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(call[0]).toBe('https://hfs-be.yunxiao.com/v2/user-center/sessions');
+    expect(call[1].method).toBe('POST');
+    expect(JSON.parse(String(call[1].body))).toEqual({ deviceType: 1, studentId: studentB });
+    expect(call[1].headers).toMatchObject({ 'hfs-token': 'TEST_TOKEN', Cookie: 'hfs-session-id=TEST_TOKEN' });
+    expect(switched.accessToken).toBe('TEST_TOKEN');
+    expect(switched.providerContext?.studentId).toBe(studentB);
+  });
+
+  it('「无需切换」（code=0 且不回显姓名）同样视为成功', async () => {
+    const { provider } = setup([{ code: 0, msg: '无需切换', data: { studentId: studentB } }]);
+    await expect(provider.selectProfile!(ownSession(studentB), studentB)).resolves.toMatchObject({ providerContext: { studentId: studentB } });
+  });
+
+  it('服务端回显的学生与目标不一致时报错，不记成本地已切换', async () => {
+    const { provider } = setup([{ code: 0, data: { studentId: studentA, studentName: '林测测' } }]);
+    await expect(provider.selectProfile!(ownSession(), studentB)).rejects.toMatchObject({ code: 'UNKNOWN' });
+  });
+
+  it('未绑定的学生映射为 NOT_FOUND 并透出平台原因', async () => {
+    const { provider } = setup([{ code: 4108, msg: '要切换的学生未绑定到当前用户', data: null }]);
+    await expect(provider.selectProfile!(ownSession(), studentB)).rejects.toMatchObject({ code: 'NOT_FOUND', message: '要切换的学生未绑定到当前用户' });
+  });
+
+  it('切换后不再复用上一个学生的档案（缓存按会话 + 当前学生隔离）', async () => {
+    const { provider, transport } = setup([
+      { code: 0, data: archivesOf('甲的考试') },
+      { code: 0, data: { studentId: studentB } },
+      { code: 0, data: archivesOf('乙的考试') },
+    ]);
+    const local = ownSession(studentA);
+    expect(await provider.getExamList(local)).toEqual([{ id: '456', name: '甲的考试' }]);
+    const switched = await provider.selectProfile!(local, studentB);
+    expect(await provider.getExamList(switched)).toEqual([{ id: '456', name: '乙的考试' }]);
+    expect(archivesCalls(transport)).toBe(2);
+  });
+
+  it('登录响应里的当前学生写入会话上下文（档案缓存从一开始就按学生隔离）', async () => {
+    const { provider } = setup([{ code: 0, data: { token: 'TEST_TOKEN', studentId: studentA } }]);
+    expect((await provider.authenticate('fictional', 'fictional')).providerContext).toEqual({ studentId: studentA });
+  });
+
+  it('只有家长版暴露学生切换能力', () => {
+    expect(setup([], 200, 2).provider.getProfiles).toBeDefined();
+    expect(setup([], 200, 2).provider.selectProfile).toBeDefined();
+    expect(setup([], 200, 1).provider.getProfiles).toBeUndefined();
+    expect(setup([], 200, 1).provider.selectProfile).toBeUndefined();
+  });
+});

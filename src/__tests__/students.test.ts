@@ -1,4 +1,4 @@
-import { selectedStudentIndex, studentProviderLabel } from '../services/students';
+import { selectedStudentIndex, studentProviderLabel, studentSwitcherVisible } from '../services/students';
 import type { StudentProfile } from '../domain/models';
 
 // 全部为虚构数据（仅结构与平台返回一致），不含任何真实学生信息。
@@ -44,5 +44,24 @@ describe('首页平台标签', () => {
 
   it('选择不在列表中（如学生已解绑）时不加后缀', () => {
     expect(studentProviderLabel('海豚阅卷', boundStudents, '99')).toBe('海豚阅卷');
+  });
+});
+
+describe('切换学生入口显示', () => {
+  it('没有或只有一个学生时隐藏（没有可切换的对象）', () => {
+    expect(studentSwitcherVisible([], false)).toBe(false);
+    expect(studentSwitcherVisible([{ id: '21', displayName: '林测测' }], false)).toBe(false);
+  });
+
+  it('绑定多个学生时显示', () => {
+    expect(studentSwitcherVisible(boundStudents, false)).toBe(true);
+  });
+
+  it('首次加载尚未取到列表时不显示，避免单学生账号闪现一下', () => {
+    expect(studentSwitcherVisible(undefined, true)).toBe(false);
+  });
+
+  it('读取失败时保留入口（菜单里有“读取失败，点击重试”）', () => {
+    expect(studentSwitcherVisible(undefined, false)).toBe(true);
   });
 });

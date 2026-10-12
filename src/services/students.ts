@@ -19,3 +19,12 @@ export function studentProviderLabel(providerName: string, profiles: readonly St
   const index = selectedStudentIndex(profiles, selectedId);
   return profiles && profiles.length > 1 && index >= 0 ? `${providerName}-${index + 1}` : providerName;
 }
+
+/**
+ * 切换学生入口是否显示：已知没有或只有一个学生（无从切换）时隐藏；首次加载还没取到列表时先不显示，
+ * 避免单学生账号闪一下；读取失败（未取到列表）时保留入口，菜单里仍有“读取失败，点击重试”。
+ */
+export function studentSwitcherVisible(profiles: readonly StudentProfile[] | undefined, pending: boolean): boolean {
+  if (profiles !== undefined) return profiles.length > 1;
+  return !pending;
+}
