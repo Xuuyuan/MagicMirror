@@ -2,6 +2,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+// 每个发布版本按架构组各产出一个包，App 会按设备架构挑选对应的那个。
+const ARCHITECTURE_GROUPS = [
+  { group: 'arm64-v8a', abis: ['arm64-v8a'] },
+  { group: 'x86_64', abis: ['x86_64'] },
+  { group: 'all', abis: ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'] },
+];
+
 function releaseInfo(pkg, lock, app, tag) {
   const version = pkg.version;
   const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.(0|[1-9]\d*))?$/.exec(version);
@@ -13,7 +20,8 @@ function releaseInfo(pkg, lock, app, tag) {
   if (!Number.isSafeInteger(versionCode) || versionCode < 1) throw new Error('Invalid Android versionCode.');
   if (tag !== `v${version}`) throw new Error(`Tag must be v${version}.`);
   const title = match[4] ? `${match[1]}.${match[2]}.${match[3]}_${match[4]}${match[5]}` : version;
-  return { version, versionCode, tag, title, prerelease: !!match[4], apk: `MagicMirror-${version}-signed.apk` };
+  const apks = ARCHITECTURE_GROUPS.map(({ group, abis }) => ({ group, abis, file: `MagicMirror-${version}-${group}-signed.apk` }));
+  return { version, versionCode, tag, title, prerelease: !!match[4], apks };
 }
 
 function releaseNotes(changelog, title) {
@@ -52,9 +60,18 @@ function main() {
   fs.writeFileSync(path.join(outputDirectory, 'release-notes.md'), notes);
   fs.writeFileSync(path.join(outputDirectory, 'release-metadata.json'), `${JSON.stringify(info, null, 2)}\n`);
   if (process.env.GITHUB_OUTPUT) {
-    fs.appendFileSync(process.env.GITHUB_OUTPUT, Object.entries(info).map(([key, value]) => `${key}=${value}\n`).join(''));
+    const outputs = [
+      `version=${info.version}`,
+      `versionCode=${info.versionCode}`,
+      `tag=${info.tag}`,
+      `title=${info.title}`,
+      `prerelease=${info.prerelease}`,
+      `apks=${info.apks.map((apk) => apk.file).join(' ')}`,
+      ...info.apks.map((apk) => `apk_${apk.group.replace(/-/g, '_')}=${apk.file}`),
+    ];
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${outputs.join('\n')}\n`);
   }
-  console.log(`Validated ${tag}, Android versionCode ${info.versionCode}.`);
+  console.log(`Validated ${tag}, Android versionCode ${info.versionCode}, ${info.apks.length} APK variants.`);
 }
 
 module.exports = { releaseInfo, releaseNotes, verifyVersionCode };

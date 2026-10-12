@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import * as Device from 'expo-device';
 import appConfig from '../../app.json';
 import { requestWithTimeout } from './http';
 
 export const updateRepository = 'Xuuyuan/MagicMirror';
 export const updateMirrorBase = 'https://gh-proxy.org';
-export const updateAssetPattern = /^MagicMirror-(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)-signed\.apk$/;
+// 每个发布版本按架构组各带一个包，第二个捕获组是架构组名（all 为兜底）。
+export const updateAssetPattern = /^MagicMirror-(\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?)-(arm64-v8a|x86_64|all)-signed\.apk$/;
+export const updateFallbackArchitecture = 'all';
 
 const releaseSchema = z.object({
   tag_name: z.string(),
@@ -82,13 +85,29 @@ async function fetchJson(url: string): Promise<unknown> {
   return response.json();
 }
 
+type ReleaseAsset = z.infer<typeof releaseSchema>['assets'][number];
+
+// 取不到架构信息（例如非 Android）时返回空数组，选包时自然回退到 all 包。
+export function getDeviceAbis(): string[] { return Device.supportedCpuArchitectures ?? []; }
+
+export function selectArchitectureAsset(assets: ReleaseAsset[], version: string, deviceAbis: string[]): ReleaseAsset | undefined {
+  const byGroup = new Map<string, ReleaseAsset>();
+  for (const asset of assets) {
+    const matched = updateAssetPattern.exec(asset.name);
+    if (matched && stripPrefix(matched[1]) === version) byGroup.set(matched[2], asset);
+  }
+  for (const abi of deviceAbis) { const sameArchitecture = byGroup.get(abi); if (sameArchitecture) return sameArchitecture; }
+  return byGroup.get(updateFallbackArchitecture);
+}
+
 export async function checkForUpdate(currentVersion = getCurrentVersion(), mirror = updateMirrorBase): Promise<UpdateCheckResult> {
   const parsed = releasesSchema.parse(await fetchJson(getReleaseApiUrl(mirror)));
+  const deviceAbis = getDeviceAbis();
   const currentIsPreRelease = /-(?:alpha|beta|rc)\./.test(currentVersion);
   const candidates = parsed.filter((release) => !release.draft && (currentIsPreRelease || !release.prerelease));
   const releases = candidates.map((release): UpdateRelease | undefined => {
     const version = stripPrefix(release.tag_name);
-    const apk = release.assets.find((asset) => updateAssetPattern.test(asset.name) && stripPrefix(asset.name.match(updateAssetPattern)?.[1] ?? '') === version);
+    const apk = selectArchitectureAsset(release.assets, version, deviceAbis);
     if (!apk) return undefined;
     const checksum = release.assets.find((asset) => asset.name === 'SHA256SUMS.txt');
     const digestValue = apk.digest?.replace(/^sha256:/i, '').toLowerCase();

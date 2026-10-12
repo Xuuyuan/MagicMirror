@@ -23,7 +23,10 @@ jobs:
       tag: ${{ steps.metadata.outputs.tag }}
       title: ${{ steps.metadata.outputs.title }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
-      apk: ${{ steps.metadata.outputs.apk }}
+      apks: ${{ steps.metadata.outputs.apks }}
+      apk_arm64_v8a: ${{ steps.metadata.outputs.apk_arm64_v8a }}
+      apk_x86_64: ${{ steps.metadata.outputs.apk_x86_64 }}
+      apk_all: ${{ steps.metadata.outputs.apk_all }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -55,7 +58,8 @@ jobs:
   build:
     needs: checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Each architecture group needs its own assembleRelease run.
+    timeout-minutes: 90
     env:
       CI: 'true'
       NODE_ENV: production
@@ -93,30 +97,36 @@ jobs:
           cmdline-tools-version: 12266719
           packages: platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.1.12297006 cmake;3.22.1
           log-accepted-android-sdk-licenses: false
-      - name: Generate native project and build ARM64 release
+      - name: Generate native project
         run: |
           backup="$RUNNER_TEMP/magicmirror-package.json"
           package_path="$GITHUB_WORKSPACE/package.json"
           cp "$package_path" "$backup"
           trap 'cp "$backup" "$package_path"' EXIT
           npx expo prebuild --platform android --no-install --clean
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --max-workers=2 -PreactNativeArchitectures=arm64-v8a
+          chmod +x android/gradlew
       - name: Restore signing key
         env:
           KEYSTORE_DATA: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           umask 077
           printf '%s' "$KEYSTORE_DATA" | base64 --decode > "$RUNNER_TEMP/magicmirror-release.p12"
-      - name: Sign with the existing release certificate
-        shell: pwsh
+      - name: Build, sign and checksum every architecture variant
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          APK_NAME: ${{ needs.checks.outputs.apk }}
+          APK_ARM64_V8A: ${{ needs.checks.outputs.apk_arm64_v8a }}
+          APK_X86_64: ${{ needs.checks.outputs.apk_x86_64 }}
+          APK_ALL: ${{ needs.checks.outputs.apk_all }}
         run: |
-          ./tools/sign-apk.ps1 -InputPath android/app/build/outputs/apk/release/app-release.apk -OutputPath "dist/$env:APK_NAME" -KeystorePath "$env:RUNNER_TEMP/magicmirror-release.p12" -KeyAlias magicmirror -NonInteractive -ExpectedCertificateSha256 c0eb0506c4aee5f28b8c77402ea88fbf776e106a4066766ad08aec0871e5cee3
+          build_and_sign() {
+            ( cd android && ./gradlew assembleRelease --no-daemon --max-workers=2 "-PreactNativeArchitectures=$1" )
+            pwsh ./tools/sign-apk.ps1 -InputPath android/app/build/outputs/apk/release/app-release.apk -OutputPath "dist/$2" -KeystorePath "$RUNNER_TEMP/magicmirror-release.p12" -KeyAlias magicmirror -NonInteractive -ExpectedCertificateSha256 c0eb0506c4aee5f28b8c77402ea88fbf776e106a4066766ad08aec0871e5cee3
+          }
+          build_and_sign arm64-v8a "$APK_ARM64_V8A"
+          build_and_sign x86_64 "$APK_X86_64"
+          # all 包是识别不出设备架构时的兜底，覆盖四种 ABI。
+          build_and_sign 'arm64-v8a,armeabi-v7a,x86,x86_64' "$APK_ALL"
       - name: Remove temporary signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/magicmirror-release.p12"
@@ -152,7 +162,7 @@ jobs:
           RELEASE_TAG: ${{ needs.checks.outputs.tag }}
           RELEASE_TITLE: ${{ needs.checks.outputs.title }}
           PRERELEASE: ${{ needs.checks.outputs.prerelease }}
-          APK_NAME: ${{ needs.checks.outputs.apk }}
+          APKS: ${{ needs.checks.outputs.apks }}
         run: |
           # A failed upload leaves a draft. Retry only that draft; published assets are never replaced.
           if existing=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
@@ -167,7 +177,9 @@ jobs:
           fi
           cd dist
           sha256sum --check SHA256SUMS.txt
-          gh release upload "$RELEASE_TAG" "$APK_NAME" SHA256SUMS.txt --clobber
+          # $APKS is a space separated list of the per-architecture APKs, so it must stay unquoted.
+          # shellcheck disable=SC2086
+          gh release upload "$RELEASE_TAG" $APKS SHA256SUMS.txt --clobber
           args=(--draft=false)
           if [[ "$PRERELEASE" == true ]]; then args+=(--prerelease --latest=false); else args+=(--latest); fi
           gh release edit "$RELEASE_TAG" "${args[@]}"

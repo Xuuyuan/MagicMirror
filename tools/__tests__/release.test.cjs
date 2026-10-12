@@ -1,10 +1,20 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { releaseInfo, releaseNotes, verifyVersionCode } = require('../release-metadata.cjs');
-const { verifyBadging } = require('../verify-release-apk.cjs');
+const { verifyBadging, parseNativeCode } = require('../verify-release-apk.cjs');
 
 function input(version = '1.0.0-beta.5', versionCode = 5) {
   return [{ version, private: true }, { version, packages: { '': { version } } }, { expo: { version, android: { versionCode } } }];
+}
+
+function variant(info, group) {
+  const found = info.apks.find((apk) => apk.group === group);
+  assert.ok(found, `release metadata must describe the ${group} variant`);
+  return found;
+}
+
+function badging(abis) {
+  return `package: name='com.magicmirror.app' versionCode='5' versionName='1.0.0-beta.5'\nnative-code: ${abis.map((abi) => `'${abi}'`).join(' ')}\n`;
 }
 
 test('beta tags map to current changelog headings, stable versions remain stable', () => {
@@ -30,12 +40,30 @@ test('reject versionCode reuse or downgrade across published versions', () => {
   assert.throws(() => verifyVersionCode(4, [5]));
   assert.throws(() => verifyVersionCode(6, [undefined]));
 });
-test('reject wrong package, wrong version, debuggable or extra ABIs', () => {
+test('name one APK per architecture group, keyed for the workflow outputs', () => {
   const info = releaseInfo(...input(), 'v1.0.0-beta.5');
-  const text = "package: name='com.magicmirror.app' versionCode='5' versionName='1.0.0-beta.5'\nnative-code: 'arm64-v8a'\n";
-  verifyBadging(text, info);
-  assert.throws(() => verifyBadging(text.replace('com.magicmirror.app', 'com.example.test'), info));
-  assert.throws(() => verifyBadging(text.replace("versionCode='5'", "versionCode='4'"), info));
-  assert.throws(() => verifyBadging(text + 'application-debuggable\n', info));
-  assert.throws(() => verifyBadging(text.replace("'arm64-v8a'", "'arm64-v8a' 'x86_64'"), info));
+  assert.deepEqual(info.apks.map((apk) => apk.file), [
+    'MagicMirror-1.0.0-beta.5-arm64-v8a-signed.apk',
+    'MagicMirror-1.0.0-beta.5-x86_64-signed.apk',
+    'MagicMirror-1.0.0-beta.5-all-signed.apk',
+  ]);
+  assert.deepEqual(variant(info, 'all').abis, ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
+});
+test('accept the ABI set of each variant and reject a mismatch or a missing native-code', () => {
+  const info = releaseInfo(...input(), 'v1.0.0-beta.5');
+  for (const apk of info.apks) verifyBadging(badging(apk.abis), info, apk.abis);
+  const arm64 = variant(info, 'arm64-v8a');
+  const all = variant(info, 'all');
+  assert.throws(() => verifyBadging(badging(all.abis), info, arm64.abis));
+  assert.throws(() => verifyBadging(badging(arm64.abis), info, all.abis));
+  assert.throws(() => verifyBadging("package: name='com.magicmirror.app' versionCode='5' versionName='1.0.0-beta.5'\n", info, arm64.abis));
+  assert.deepEqual(parseNativeCode(badging(all.abis)), ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
+});
+test('reject wrong package, wrong version or a debuggable build', () => {
+  const info = releaseInfo(...input(), 'v1.0.0-beta.5');
+  const abis = variant(info, 'arm64-v8a').abis;
+  const text = badging(abis);
+  assert.throws(() => verifyBadging(text.replace('com.magicmirror.app', 'com.example.test'), info, abis));
+  assert.throws(() => verifyBadging(text.replace("versionCode='5'", "versionCode='4'"), info, abis));
+  assert.throws(() => verifyBadging(text + 'application-debuggable\n', info, abis));
 });
