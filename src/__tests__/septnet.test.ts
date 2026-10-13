@@ -162,7 +162,7 @@ describe('Septnet Provider（无网络）', () => {
     ['B1', '15-21%'], ['B2', '21-28%'], ['B3', '28-36%'], ['B4', '36-43%'], ['B5', '43-50%'],
     ['C1', '50-56%'], ['C2', '56-64%'], ['C3', '64-71%'], ['C4', '71-78%'], ['C5', '78-84%'],
     ['D1', '84-89%'], ['D2', '89-93%'], ['D3', '93-96%'], ['D4', '96-98%'], ['D5', '98-99%'],
-    ['E', '99-100%'], [' c4 ', '71-78%'], ['-', undefined], ['未知', undefined],
+    ['E', '99-100%'], ['E1', '99-100%'], ['e1', '99-100%'], [' c4 ', '71-78%'], ['-', undefined], ['E2', undefined], ['未知', undefined],
   ])('等第 %s 对应百分比 %s，未知等第不推算', async (grade, percentile) => {
     const session: AuthSession = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN_0123456789',
       providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10' } };
@@ -278,9 +278,10 @@ describe('Septnet Provider（无网络）', () => {
     const result = await provider.getExamResult(session, 'EXAM-0001-AAAA');
     expect(result.totalScore).toBe(238);
     expect(result.participantCount).toBe(512);
+    expect(result.notice).toBeUndefined();
     expect(result.subjects).toEqual([
       { subject: '语文', score: 118, maxScore: 150, grade: 'A2', providerContext: {
-        essayAvg: '38.5', essayMax: '56', gradePercentile: '1-3%', responseGuid: 'GUID-1', rating: '优', hasEssayInfo: 'true',
+        essayAvg: '38.5', essayMax: '56', gradePercentile: '1-3%', responseGuid: 'GUID-1', rating: '优', hasEssayInfo: 'true', examType: '周测',
         essay_score: '40', essay_full: '60', essay_avg: '38.5', essay_max: '56',
       } },
     ]);
@@ -421,6 +422,7 @@ describe('Septnet Provider（无网络）', () => {
     expect(detail.questions).toBeUndefined();
     expect(detail.providerContext?.essayAvg).toBeUndefined();
     expect(detail.reportSections?.find(s => s.id === 'septnet-subject-info')).toBeUndefined();
+    expect(detail.reportSections?.find(s => s.id === 'septnet-essay')?.placement).toBe('essay');
     expect(detail.reportSections?.find(s => s.id === 'septnet-essay')?.highlights).toEqual(expect.arrayContaining([
       { label: '个人得分', value: '0', unit: '分' }, { label: '满分', value: '60', unit: '分' },
       { label: '更高分人数', value: '500', unit: '人' }, { label: '距最高分', value: '55', unit: '分' },
@@ -461,8 +463,190 @@ describe('Septnet Provider（无网络）', () => {
     ]);
     const result = await provider.getExamResult(detailSession, 'EXAM-0001-AAAA');
     expect(result).toMatchObject({ grade: 'A2', gradePercentile: '1-3%', publishedAt: '2026-05-27 10:27:08', isUnion: true });
+    // 联考：顶部提示等第百分比是校内排名比例（可关闭，按 id 记忆）。
+    expect(result.notice).toEqual({ id: 'septnet-union-grade-scope', text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。' });
     expect(result.reportSections).toBeUndefined();
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     expect(calls.some(([url]) => url.endsWith('/Conclusion'))).toBe(false);
+  });
+
+  it('考试发布类型写入科目上下文（小程序作文接口需要）', async () => {
+    const { provider } = setup([
+      obfuscated(examList), sealed({ config: { CloseCF: false }, charge: {} }),
+      sealed({ ...subjects, exam_info: { ...subjects.exam_info, examPublishType: 0 } }),
+      sealed(report),
+    ]);
+    const result = await provider.getExamResult(detailSession, 'EXAM-0001-AAAA');
+    expect(result.subjects.find((item) => item.subject === '语文')?.providerContext?.examPublishType).toBe('0');
+    // examType 供旧版科目统计接口使用。
+    expect(result.subjects.find((item) => item.subject === '语文')?.providerContext?.examType).toBe('周测');
+  });
+
+  const paperBody = { subject: '语文', imgUrls: ['https://itembank.example.com/p1.jpg', 'https://itembank.example.com/p2.jpg'] };
+
+  it('试卷原卷：按科目请求小程序接口面，token 走参数不走请求头', async () => {
+    const { provider, transport } = setup([{ status: 200, message: 'success', data: [paperBody] }]);
+    const sheets = await provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult);
+    expect(sheets).toEqual([
+      { subject: '语文', subjectId: '语文', url: 'https://itembank.example.com/p1.jpg', watermarked: false },
+      { subject: '语文', subjectId: '语文', url: 'https://itembank.example.com/p2.jpg', watermarked: false },
+    ]);
+    const [url, init] = transport.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://szone-public.7net.cc/publicszoneui.service/QuestionNService/Paper');
+    const body = decodeURIComponent(String(init.body));
+    expect(body).toContain('token=TEST_TOKEN_0123456789');
+    expect(body).toContain('version=4.6.4');
+    expect(body).toContain('km=语文');
+    expect(body).toContain('srcKm=语文原卷');
+    expect((init.headers as Record<string, string>)['Token']).toBeUndefined();
+  });
+
+  it('试卷原卷：响应加密可解析，空数组与缺考科目分别降级', async () => {
+    const encrypted = setup([obfuscated([paperBody])]);
+    expect(await encrypted.provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult)).toHaveLength(2);
+    const empty = setup([{ status: 200, message: 'success', data: [] }]);
+    expect(await empty.provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult)).toEqual([]);
+    const absent = setup([]);
+    await expect(absent.provider.getPaperImages!(detailSession, cachedResult.examId, '化学', cachedResult)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(absent.transport).not.toHaveBeenCalled();
+  });
+
+  const essayResult: ExamResult = { examId: 'EXAM-0001-AAAA', examName: '虚构考试', subjects: [{ subject: '语文', score: 90, maxScore: 150,
+    providerContext: { responseGuid: 'GUID-1', srcKm: '语文原卷', hasEssayInfo: 'true', essay_th: '21', examPublishType: '0' } }] };
+
+  it('作文：题干与本人作答切图各取一次小程序接口，参数含考号与题号', async () => {
+    const { provider, transport } = setup([
+      { status: 200, message: 'success', data: { th: '21', myAnswers: ['https://yjimage.example.com/a.jpg'] } },
+      { status: 200, message: 'success', data: { questionStemTxt: '虚构作文题干' } },
+    ]);
+    const essay = await provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult);
+    expect(essay.prompt).toBe('虚构作文题干');
+    expect(essay.answerSheets).toEqual([{ subject: '语文', subjectId: '语文', url: 'https://yjimage.example.com/a.jpg', watermarked: true }]);
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([url]) => url)).toEqual([
+      'https://szone-public.7net.cc/publicszoneui.service/QuestionNService/AIEssayReport',
+      'https://szone-public.7net.cc/publicszoneui.service/QuestionNService/EssayQuestionStem',
+    ]);
+    expect(decodeURIComponent(String(calls[0][1].body))).toContain('responseGuid=GUID-1');
+    expect(decodeURIComponent(String(calls[0][1].body))).toContain('examPublishType=0');
+    expect(decodeURIComponent(String(calls[1][1].body))).toContain('th=21');
+    expect(decodeURIComponent(String(calls[1][1].body))).toContain('responseGuid=GUID-1');
+  });
+
+  it('作文：一侧不可用不影响另一侧，无作答切图时退回 PDF 分页图', async () => {
+    const { provider } = setup([
+      { status: 200, message: 'success', data: { pdfImgs: ['https://yjimage.example.com/pdf-1.jpg'] } },
+      { status: 405 },
+    ]);
+    const essay = await provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult);
+    expect(essay.prompt).toBeUndefined();
+    expect(essay.answerSheets).toEqual([{ subject: '语文', subjectId: '语文', url: 'https://yjimage.example.com/pdf-1.jpg', watermarked: true }]);
+  });
+
+  it('作文：非作文科目不发请求；缺发布类型只取题干；缺作答记录时两个请求都不发', async () => {
+    const plain = setup([]);
+    const noEssay: ExamResult = { ...essayResult, subjects: [{ subject: '数学', score: 100, providerContext: {} }] };
+    expect(await plain.provider.getEssayDetail!(detailSession, noEssay.examId, '数学', noEssay)).toEqual({ answerSheets: [] });
+    expect(plain.transport).not.toHaveBeenCalled();
+    // 缺少 examPublishType 时作答接口不请求，题干接口按 responseGuid + 题号仍可用。
+    const noPublishType = setup([{ status: 200, message: 'success', data: { questionStemTxt: '仅题干' } }]);
+    const partial: ExamResult = { ...essayResult, subjects: [{ subject: '语文', score: 90, providerContext: { hasEssayInfo: 'true', essay_th: '21', srcKm: '语文原卷', responseGuid: 'GUID-1' } }] };
+    expect(await noPublishType.provider.getEssayDetail!(detailSession, partial.examId, '语文', partial)).toEqual({ prompt: '仅题干', answerSheets: [] });
+    expect(noPublishType.transport).toHaveBeenCalledTimes(1);
+    expect(decodeURIComponent(String((noPublishType.transport.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toContain('responseGuid=GUID-1');
+    const noResponseGuid = setup([{ status: 200, message: 'success', data: { questionStemTxt: '不应取到' } }]);
+    const missingGuid: ExamResult = { ...essayResult, subjects: [{ subject: '语文', score: 90, providerContext: { hasEssayInfo: 'true', essay_th: '21' } }] };
+    expect(await noResponseGuid.provider.getEssayDetail!(detailSession, missingGuid.examId, '语文', missingGuid)).toEqual({ answerSheets: [] });
+    expect(noResponseGuid.transport).not.toHaveBeenCalled();
+    const expired = setup([{ status: 401 }]);
+    await expect(expired.provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+  });
+
+  it('已删除「科目信息」卡片：赋分科目的原始满分不再单独成卡', async () => {
+    const fuResult: ExamResult = { examId: 'EXAM-0001-AAAA', examName: '虚构考试', subjects: [
+      { subject: '化学', score: 65, maxScore: 100, providerContext: { scaledScore: '65', originalScore: '20', originalMaxScore: '100' } }] };
+    const { provider, transport } = setup([]);
+    const detail = await provider.getSubjectDetail!(detailSession, fuResult.examId, '化学', fuResult);
+    // 原始分已在主分数行展示（且不重复满分），这里不再单独成卡。
+    expect(detail.reportSections?.find(s => s.id === 'septnet-subject-info')).toBeUndefined();
+    expect(detail.reportSections).toEqual([]);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('学校排名（预估）：参考人数 × 等第比例带，上下界向上取整；未知等第不推算', async () => {
+    const { provider } = setup([
+      { status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 500 } } },
+    ]);
+    const graded: ExamResult = { examId: 'EXAM-0001-AAAA', examName: '虚构考试', subjects: [
+      { subject: '语文', score: 90, grade: 'B3', providerContext: { examType: '周测' } }] };
+    // B3 = 28-36%：500×28%=140、500×36%=180。
+    expect(await provider.getSubjectStatistics!(detailSession, graded.examId, '语文', graded)).toEqual([
+      { scope: '学校参考', participantCount: 500 },
+      { scope: '学校', rank: 140, rankMax: 180, estimate: true },
+    ]);
+    // 等第写小写同样识别；A1（前 1%）下界从第 1 名起。
+    const lower = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 500 } } }]);
+    const top: ExamResult = { ...graded, subjects: [{ subject: '语文', score: 90, grade: 'a1', providerContext: { examType: '周测' } }] };
+    expect(await lower.provider.getSubjectStatistics!(detailSession, top.examId, '语文', top)).toEqual([
+      { scope: '学校参考', participantCount: 500 },
+      { scope: '学校', rank: 1, rankMax: 5, estimate: true },
+    ]);
+    // E1 视同 E：500 人的 99-100% → 495~500。
+    const e1 = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 500 } } }]);
+    const last: ExamResult = { ...graded, subjects: [{ subject: '语文', score: 90, grade: 'E1', providerContext: { examType: '周测' } }] };
+    expect(await e1.provider.getSubjectStatistics!(detailSession, last.examId, '语文', last)).toEqual([
+      { scope: '学校参考', participantCount: 500 },
+      { scope: '学校', rank: 495, rankMax: 500, estimate: true },
+    ]);
+    // 非等第（评价词）不推算。
+    const word = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 500 } } }]);
+    const rated: ExamResult = { ...graded, subjects: [{ subject: '语文', score: 90, grade: '优', providerContext: { examType: '周测' } }] };
+    expect(await word.provider.getSubjectStatistics!(detailSession, rated.examId, '语文', rated)).toEqual([
+      { scope: '学校参考', participantCount: 500 },
+    ]);
+  });
+
+  const statsResult: ExamResult = { examId: 'EXAM-0001-AAAA', examName: '虚构考试', subjects: [
+    { subject: '语文', score: 90, providerContext: { examType: '周测' } }, { subject: '数学', score: 80 }] };
+
+  it('科目统计：换考号后取学校参考人数，参数与链路正确且不透出考号', async () => {
+    const { provider, transport } = setup([
+      { status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 584, myScore: '105.5' } } },
+    ]);
+    const statistics = await provider.getSubjectStatistics!(detailSession, statsResult.examId, '语文', statsResult);
+    // 等第未知时不推算预估名次，只给校内参考人数。
+    expect(statistics).toEqual([{ scope: '学校参考', participantCount: 584 }]);
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([url]) => url)).toEqual([
+      'https://szone-public.7net.cc/publicszoneui.service/AIErrorBookService/Redirect',
+      'https://szone-public.7net.cc/publicszoneui.service/QuestionService/SubjectGrade',
+    ]);
+    const body = decodeURIComponent(String(calls[1][1].body));
+    expect(body).toContain('studentCode=FICTIONAL-CODE');
+    expect(body).toContain('examType=周测');
+    expect(body).toContain('subject=语文');
+    expect(JSON.stringify(statistics)).not.toContain('FICTIONAL-CODE');
+  });
+
+  it('科目统计：缺考试性质或链路不可用时返回空数组，登录失效仍抛出', async () => {
+    const plain = setup([]);
+    const noType: ExamResult = { ...statsResult, subjects: [{ subject: '语文', score: 90, providerContext: {} }] };
+    expect(await plain.provider.getSubjectStatistics!(detailSession, noType.examId, '语文', noType)).toEqual([]);
+    expect(plain.transport).not.toHaveBeenCalled();
+
+    const denied = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } }, { status: 404, message: '暂无数据' }]);
+    expect(await denied.provider.getSubjectStatistics!(detailSession, statsResult.examId, '语文', statsResult)).toEqual([]);
+    const noStudentCode = setup([{ status: 200, message: 'success', data: {} }]);
+    expect(await noStudentCode.provider.getSubjectStatistics!(detailSession, statsResult.examId, '语文', statsResult)).toEqual([]);
+    const zeroTotal = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 0 } } }]);
+    expect(await zeroTotal.provider.getSubjectStatistics!(detailSession, statsResult.examId, '语文', statsResult)).toEqual([]);
+    const expired = setup([{ status: 401 }]);
+    await expect(expired.provider.getSubjectStatistics!(detailSession, statsResult.examId, '语文', statsResult)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
   });
 });

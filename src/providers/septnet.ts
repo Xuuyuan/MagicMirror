@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ecb, gcm } from '@noble/ciphers/aes.js';
 import { getRandomBytes } from 'expo-crypto';
-import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type ReportSection, type UnclaimedExam } from '../domain/models';
+import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type SubjectStatistic, type UnclaimedExam } from '../domain/models';
 import { distributionSection, essaySection } from './septnet-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
@@ -25,6 +25,8 @@ export { base64ToBytes, bytesToBase64, bytesToUtf8, numericScore, utf8ToBytes } 
  */
 const host = 'https://szone-my.7net.cc/';
 const scoreHost = 'https://szone-score.7net.cc/';
+// 小程序接口面：明文表单 + token/version 参数，与 App 登录共用同一 token（见 analysis/qitianxuetang/interface-audit.md）。
+const publicHost = 'https://szone-public.7net.cc/';
 const version = '4.6.4';
 // 实测：App 用 WebView UA 发请求；固定为该形态即可通过。
 const userAgent = 'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) AppleWebKit/537.36'
@@ -124,6 +126,20 @@ const essayResponseSchema = z.object({ essayThInfo: essaySchema.optional() });
 const distributionSchema = z.array(z.object({ th: z.string().min(1), sort: z.number().finite().optional(),
   distri: z.array(z.object({ key: z.string(), value: z.string() })),
 }));
+// 试卷原卷：按科目下发的扫描图地址（itembank OSS 签名直链，实测短期有效）。
+const paperSchema = z.array(z.object({ subject: z.string().min(1), imgUrls: z.array(z.string().min(1)).optional() }));
+// 作文：作答切图（myAnswers）与得分统计；pdf 相关字段实测多为空，同样保守解析。
+const essayReportSchema = z.object({
+  th: z.string().optional(), score: z.string().optional(), full: z.string().optional(),
+  avg: z.string().optional(), max: z.string().optional(), diff: z.string().optional(), highCount: z.string().optional(),
+  myAnswers: z.array(z.string().min(1)).optional(), pdfImgs: z.array(z.string().min(1)).optional(),
+});
+const essayStemSchema = z.object({ questionStemTxt: z.string().optional(), uploadImg: z.string().optional() });
+// 旧版接口的科目统计：`report.total` 经项目负责人确认为「校内参加本科目考试的考生人数」（是本科目，不是本场考试）。
+const subjectGradeSchema = z.object({
+  report: z.object({ total: z.number().finite().optional() }).optional(),
+});
+const studentCodeSchema = z.object({ studentCode: z.string().optional() });
 
 function parse<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   return parseValidated(schema, raw, `七天学堂${label}结构不符合预期`);
@@ -135,14 +151,28 @@ function assignedScore(row: z.infer<typeof reportRowSchema> | undefined): number
   return score !== undefined && score >= 0 ? score : undefined;
 }
 
-// 按项目负责人提供的等第区间展示，不推算个人精确名次。
-const gradePercentiles: Readonly<Record<string, string>> = {
-  A1: '前1%', A2: '1-3%', A3: '3-6%', A4: '6-10%', A5: '10-15%',
-  B1: '15-21%', B2: '21-28%', B3: '28-36%', B4: '36-43%', B5: '43-50%',
-  C1: '50-56%', C2: '56-64%', C3: '64-71%', C4: '71-78%', C5: '78-84%',
-  D1: '84-89%', D2: '89-93%', D3: '93-96%', D4: '96-98%', D5: '98-99%',
-  E: '99-100%',
+// 按项目负责人提供的等第区间（从高到低的比例带，单位 %），展示串由此派生，不推算个人精确名次。
+const gradeBands: Readonly<Record<string, { min: number; max: number }>> = {
+  A1: { min: 0, max: 1 }, A2: { min: 1, max: 3 }, A3: { min: 3, max: 6 }, A4: { min: 6, max: 10 }, A5: { min: 10, max: 15 },
+  B1: { min: 15, max: 21 }, B2: { min: 21, max: 28 }, B3: { min: 28, max: 36 }, B4: { min: 36, max: 43 }, B5: { min: 43, max: 50 },
+  C1: { min: 50, max: 56 }, C2: { min: 56, max: 64 }, C3: { min: 64, max: 71 }, C4: { min: 71, max: 78 }, C5: { min: 78, max: 84 },
+  D1: { min: 84, max: 89 }, D2: { min: 89, max: 93 }, D3: { min: 93, max: 96 }, D4: { min: 96, max: 98 }, D5: { min: 98, max: 99 },
+  E: { min: 99, max: 100 },
 };
+
+// 平台可能下发带次级的等第；按项目负责人确认，E1 视同等第 E（区间表只有 E）。
+const gradeAliases: Readonly<Record<string, string>> = { E1: 'E' };
+
+function gradeBand(grade: string | undefined): { min: number; max: number } | undefined {
+  const code = (grade ?? '').trim().toUpperCase();
+  const key = gradeAliases[code] ?? code;
+  return Object.hasOwn(gradeBands, key) ? gradeBands[key] : undefined;
+}
+
+function gradePercentileText(grade: string | undefined): string | undefined {
+  const band = gradeBand(grade);
+  return band ? band.min === 0 ? `前${band.max}%` : `${band.min}-${band.max}%` : undefined;
+}
 
 function businessError(status: number | string): ProviderError {
   const code = Number(status);
@@ -294,6 +324,28 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       body: new URLSearchParams(params).toString(), signal: options?.signal,
     });
     return openData(body.data);
+  }
+
+  /**
+   * 小程序接口面：token 与版本号放进请求参数，不发送 `Token` 头（与官方小程序同形；实测服务端不校验）。
+   * 响应仍可能使用平台静态密钥加密，沿用 `openData` 解密；错误语义与 App 接口面一致。
+   */
+  async function publicPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+    const publicHeaders: Record<string, string> = { Version: version, 'User-Agent': userAgent, 'Accept-Charset': 'UTF-8' };
+    const cookie = session.providerContext?.['wafCookie'];
+    if (cookie) publicHeaders['Cookie'] = cookie;
+    const body = await request(publicHost + route, {
+      method: 'POST',
+      headers: { ...publicHeaders, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8;' },
+      body: new URLSearchParams({ ...params, token: session.accessToken, version }).toString(), signal: options?.signal,
+    });
+    return openData(body.data);
+  }
+
+  /** 按科目定位考试成绩缓存里的科目行；缺考与不存在返回 undefined。 */
+  function locateSubject(result: ExamResult, subjectId: string) {
+    const subject = result.subjects.find((item) => item.id === subjectId || item.subject === subjectId);
+    return subject && subject.status !== 'absent' ? subject : undefined;
   }
 
   /** 附加报告缺失不阻断基础成绩；失效会话和取消操作仍交给统一错误路径。 */
@@ -500,7 +552,7 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         examId, examName: exam.examName,
         isUnion: subjects.exam_info?.isUnion,
         grade: totalGrade && totalGrade !== '-' ? totalGrade : undefined,
-        gradePercentile: Object.hasOwn(gradePercentiles, totalGrade) ? gradePercentiles[totalGrade] : undefined,
+        gradePercentile: gradePercentileText(totalGrade),
         subjects: [...merged.values()]
           .filter((row) => row.km !== '总分' && row.kmTag !== -2)
           .map((row) => {
@@ -516,6 +568,10 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               if (subject?.responseGuid) context.responseGuid = subject.responseGuid;
               if (subject?.srcKm) context.srcKm = subject.srcKm;
               if (exam.ruleHash) context.ruleHash = exam.ruleHash;
+              // 考试级发布类型：小程序接口面的作文接口要求携带，与 ruleHash 同样按考试级字段处理。
+              if (subjects.exam_info?.examPublishType !== undefined) context.examPublishType = String(subjects.exam_info.examPublishType);
+              // 考试性质标签：旧版科目统计接口需要 examType。
+              if (exam.type) context.examType = exam.type;
               if (row.rating?.trim()) context.rating = row.rating.trim();
               if ((subject?.ai_essay_report && Object.keys(subject.ai_essay_report).length) || /语文|英语/.test(row.km)) context.hasEssayInfo = 'true';
               for (const field of ['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount'] as const) {
@@ -523,15 +579,13 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               }
             }
             const gradeCode = (row.grade ?? '').trim().toUpperCase();
-            const gradePercentile = absent ? undefined : Object.hasOwn(gradePercentiles, gradeCode) ? gradePercentiles[gradeCode] : undefined;
+            const gradePercentile = absent ? undefined : gradePercentileText(gradeCode);
             if (gradePercentile !== undefined) context.gradePercentile = gradePercentile;
             if (essayAvg !== undefined) context.essayAvg = String(essayAvg);
             if (essayMax !== undefined) context.essayMax = String(essayMax);
             if (scaledScore !== undefined) {
               context.scaledScore = String(scaledScore);
               if (rawScore !== undefined) context.originalScore = String(rawScore);
-              const originalMax = numericScore(row.fullScore);
-              if (originalMax !== undefined) context.originalMaxScore = String(originalMax);
             }
             return {
               subject: row.km, score: scaledScore ?? rawScore,
@@ -544,6 +598,10 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         totalScore, maxTotalScore: maxTotalScore ?? 0,
         ...(scaledTotalScore !== undefined && rawTotalScore !== undefined ? { originalTotalScore: rawTotalScore } : {}),
         ...(participantCount !== undefined ? { participantCount } : {}),
+        // 联考的等第百分比是校内排名比例，容易被误读为联考范围；顶部给出可关闭说明。
+        ...(subjects.exam_info?.isUnion === true
+          ? { notice: { id: 'septnet-union-grade-scope', text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。' } }
+          : {}),
         ...(scaledTotalScore !== undefined ? { originalMaxTotalScore: numericScore(total?.fullScore ?? info?.fullScore) } : {}),
         // 平台不提供名次（只有等级位置，且非会员被拦截）：保持 undefined。
         ranking: undefined,
@@ -560,9 +618,6 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         schoolRuCode: target.ruCode, km: subject.subject, srcKm: ctx.srcKm ?? subject.subject };
       const reportSections: ReportSection[] = [];
       const notices: string[] = [];
-      const notes: string[] = [];
-      if (ctx.originalMaxScore) notes.push(`原始分满分 ${ctx.originalMaxScore}`);
-      if (notes.length) reportSections.push({ id: 'septnet-subject-info', title: '科目信息', notes });
       const embeddedEssay = Object.fromEntries(['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount']
         .flatMap((field) => ctx[`essay_${field}`] !== undefined ? [[field, ctx[`essay_${field}`]]] : []));
       const [essay, distribution] = await Promise.all([
@@ -585,6 +640,99 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       const providerContext = Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== 'essayAvg' && key !== 'essayMax'));
       return { subjectId, subject: subject.subject, score: subject.score, maxScore: subject.maxScore, grade: subject.grade,
         providerContext, reportSections };
+    },
+    // 小程序接口面（szone-public）的原卷：按科目返回原卷扫描图，地址为短期签名直链，界面过期后重取。
+    async getPaperImages(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]> {
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      if (!subject) throw new ProviderError('NOT_FOUND', '该科目不可用或已标记缺考');
+      const target = context(session);
+      const ctx = subject.providerContext ?? {};
+      const data = parse(paperSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/Paper', {
+        examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
+        km: subject.subject, srcKm: ctx.srcKm ?? subject.subject,
+      }, options), '试卷原卷');
+      // 原卷是空白试卷扫描件，不含个人作答与得分标注。
+      return data.flatMap((paper) => paper.imgUrls ?? [])
+        .map((url) => ({ subject: subject.subject, subjectId, url, watermarked: false }));
+    },
+    /**
+     * 小程序接口面的作文数据：题干全文 + 本人作答切图（作答图与答题卡同源，标记为含水印）。
+     * 统计卡片沿用 `Question/ThScoreInfo` 的既有实现，这里只补题干与图片；缺参数时安静降级。
+     */
+    async getEssayDetail(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<EssayDetail> {
+      const empty: EssayDetail = { answerSheets: [] };
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      if (!subject) return empty;
+      const ctx = subject.providerContext ?? {};
+      if (ctx.hasEssayInfo !== 'true') return empty;
+      const target = context(session);
+      const srcKm = ctx.srcKm ?? subject.subject;
+      const base = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade,
+        schoolRuCode: target.ruCode, km: subject.subject, srcKm,
+        subject: subject.subject, srcSubject: srcKm, examPublishType: ctx.examPublishType ?? '' };
+      const [report, stem] = await Promise.all([
+        ctx.responseGuid && ctx.examPublishType !== undefined
+          ? optionalReport(async () => parse(essayReportSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/AIEssayReport',
+            { ...base, responseGuid: ctx.responseGuid, asiResponse: ctx.responseGuid }, options), '作文作答'), '作文作答', options)
+          : Promise.resolve({ data: undefined, notice: undefined }),
+        // 实测：题干接口同样要求 responseGuid（缺它返回 400）。
+        ctx.essay_th && ctx.responseGuid
+          ? optionalReport(async () => parse(essayStemSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/EssayQuestionStem',
+            { ...base, th: ctx.essay_th!, type: '1', responseGuid: ctx.responseGuid }, options), '作文题干'), '作文题干', options)
+          : Promise.resolve({ data: undefined, notice: undefined }),
+      ]);
+      const prompt = stem.data?.questionStemTxt?.trim();
+      // 作答切图缺失时退回平台下发的 PDF 分页图，两者都来自同一份作答扫描。
+      const images = report.data?.myAnswers?.length ? report.data.myAnswers : (report.data?.pdfImgs ?? []);
+      return {
+        ...(prompt ? { prompt } : {}),
+        answerSheets: images.map((url) => ({ subject: subject.subject, subjectId, url, watermarked: true })),
+      };
+    },
+    /**
+     * 调试用途：把平台未与官方 UI 对照语义的原始字段交给调试模式展示（如 v1 `SubjectGrade` 的 `report.total`）。
+     * 任一环节不可用即返回空数组；不把 studentCode 等中间凭据透出给界面。
+     */
+    /**
+     * 科目级统计：校内参加本科目考试的考生人数（平台旧版接口的 `report.total`，已由项目负责人确认语义）。
+     * 取数需要先换考号，且只对本人有权查看的科目有效；任一环节不可用即返回空数组，不阻断科目详情。
+     */
+    async getSubjectStatistics(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<SubjectStatistic[]> {
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      const target = context(session);
+      const ctx = subject?.providerContext ?? {};
+      if (!subject || !ctx.examType || !target.ruCode) return [];
+      const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
+        ruCode: target.ruCode, examType: ctx.examType, examSchoolGuid: target.schoolGuid,
+        subject: subject.subject, subjectCount: String(result.subjects.length) };
+      try {
+        const redirect = parse(studentCodeSchema, await publicPost(session, 'publicszoneui.service/AIErrorBookService/Redirect', {
+          ruCode: target.ruCode, examGuid: examId, studentCode: '', schoolGuid: target.schoolGuid,
+          examSchoolGuid: target.schoolGuid, grade: target.grade, from: '1',
+        }, options), '科目统计');
+        if (!redirect.studentCode) return [];
+        const grade = parse(subjectGradeSchema, await publicPost(session, 'publicszoneui.service/QuestionService/SubjectGrade',
+          { ...params, studentCode: redirect.studentCode }, options), '科目统计');
+        const total = grade.report?.total;
+        // 0 或负数不是有效人数，视为未提供。
+        if (total === undefined || total <= 0) return [];
+        const statistics: SubjectStatistic[] = [{ scope: '学校参考', participantCount: total }];
+        // 预估排名 = 参考人数 × 等第比例带（从高到低），上下界向上取整；未知等第不推算。
+        const band = gradeBand(subject.grade);
+        if (band) {
+          const lower = Math.max(1, Math.ceil(total * band.min / 100));
+          const upper = Math.min(total, Math.ceil(total * band.max / 100));
+          statistics.push({ scope: '学校', rank: lower, rankMax: Math.max(lower, upper), estimate: true });
+        }
+        return statistics;
+      } catch (error) {
+        throwIfAborted(options?.signal);
+        if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;
+        return [];
+      }
     },
     async getAnswerSheets(session, examId, subjectId, _cachedResult, options?: ProviderRequestOptions) {
       return answerCardSheets(session, examId, subjectId, false, options);

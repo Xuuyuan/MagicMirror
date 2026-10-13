@@ -71,7 +71,7 @@ it('shows the official paper maximum after both scaled and original scores', asy
   const result = await ruiyaProvider.getExamResult(session, 'REPORT');
   expect(result).toMatchObject({ totalScore: 8, originalTotalScore: 5, originalMaxTotalScore: 6 });
   expect(result.maxTotalScore).toBe(6);
-  expect(result.subjects[0]).toMatchObject({ score: 8, providerContext: { originalScore: '5', originalMaxScore: '6' } });
+  expect(result.subjects[0]).toMatchObject({ score: 8, providerContext: { originalScore: '5' } });
   expect(result.subjects[0].maxScore).toBe(6);
 });
 

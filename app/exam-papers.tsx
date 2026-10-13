@@ -1,0 +1,43 @@
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocalSearchParams } from 'expo-router';
+import { Pressable } from 'react-native';
+import { Button, Text } from 'react-native-paper';
+import { paperImagesQueryOptions } from '@/src/services/queries';
+import { SheetActionsSheet } from '@/src/sheet-actions';
+import { AdaptiveSheetImage, SheetViewerModal } from '@/src/sheet-image';
+import { useAccounts } from '@/src/accounts-context';
+import type { AnswerSheet } from '@/src/domain/models';
+import { Screen, Header, Body, Card, ErrorCard, LoadingState, useDoubleTap } from '@/src/ui';
+
+export default function ExamPapers() {
+  const { accountId, examId, subjectId } = useLocalSearchParams<{ accountId: string; examId: string; subjectId?: string }>();
+  const { accounts } = useAccounts();
+  const revision = accounts.find((account) => account.id === accountId)?.revision;
+  const queryClient = useQueryClient();
+  const [zoom, setZoom] = useState<AnswerSheet>();
+  const [actions, setActions] = useState<AnswerSheet>();
+  const [imageError, setImageError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const handleImageError = () => setImageError(true);
+  const handleImagePress = useDoubleTap<AnswerSheet>((sheet) => { setImageError(false); setZoom(sheet); });
+  const query = useQuery(paperImagesQueryOptions(queryClient, accountId, revision, examId, subjectId ?? ''));
+  if (!subjectId) return <Screen><Header title="试卷原卷" back /><Body><Card><Text>请从单科详情进入试卷原卷。</Text></Card></Body></Screen>;
+  if (query.isPending) return <Screen><Header title="试卷原卷" back /><LoadingState label="正在加载试卷原卷…" /></Screen>;
+  if (query.error) return <Screen><Header title="试卷原卷" back /><Body><ErrorCard error={query.error} retry={() => void query.refetch()} accountId={accountId} /></Body></Screen>;
+  const sheets = query.data ?? [];
+  function refresh() { setImageError(false); setReloadKey((value) => value + 1); void query.refetch(); }
+  return <Screen><Header title="试卷原卷" back /><Body>
+    {sheets.length ? sheets.map((sheet, index) => <Card key={`${sheet.subject}-${sheet.url}`}>
+      <Text variant="titleMedium">{sheets.length > 1 ? `${sheet.subject}（第 ${index + 1} 页）` : sheet.subject}</Text>
+      <Pressable accessibilityRole="imagebutton" accessibilityLabel={`查看第 ${index + 1} 页原卷`} onPress={() => handleImagePress(sheet)} onLongPress={() => setActions(sheet)}>
+        <AdaptiveSheetImage sheet={sheet} reloadKey={reloadKey} onError={handleImageError} />
+      </Pressable>
+      {imageError ? <Text>图片链接可能已过期，请重新获取。</Text> : null}
+      {imageError ? <Button onPress={refresh} loading={query.isFetching}>重新获取原卷</Button> : null}
+    </Card>) : <Card><Text>平台未提供本科目原卷。</Text></Card>}
+  </Body>
+    <SheetViewerModal sheet={zoom} onDismiss={() => setZoom(undefined)} onLongPress={setActions} />
+    <SheetActionsSheet sheet={actions} onDismiss={() => setActions(undefined)} />
+  </Screen>;
+}

@@ -23,7 +23,7 @@ it('修改偏好保存全部字段，重启后恢复，仍兼容主题设置', a
   const calls = jest.mocked(first.storage.setItemAsync).mock.calls;
   const [key, raw] = calls.at(-1)!;
   expect(key).toBe('magicmirror.ui.v1');
-  expect(JSON.parse(raw)).toEqual({ theme: 'dark', seedColor: '#123456', showAbsentSubjects: false, septnetGradeDisplay: 'percentile' });
+  expect(JSON.parse(raw)).toEqual({ theme: 'dark', seedColor: '#123456', showAbsentSubjects: false, septnetGradeDisplay: 'percentile', dismissedNotices: [] });
   const second = await freshStore(raw);
   await second.hydratePreferences();
   expect(second.useAppStore.getState()).toMatchObject(JSON.parse(raw));
@@ -32,4 +32,20 @@ it('修改偏好保存全部字段，重启后恢复，仍兼容主题设置', a
   expect(JSON.parse(writes.mock.calls[0][1])).toEqual(JSON.parse(raw));
   await second.hydratePreferences();
   expect(writes).toHaveBeenCalledTimes(1);
+});
+
+it('提示关闭状态（按考试 + 提示键）随偏好保存并在重启后恢复，重复关闭不重复写入', async () => {
+  const first = await freshStore(null);
+  await first.hydratePreferences();
+  first.useAppStore.getState().dismissNotice('septnet-union-grade-scope');
+  first.useAppStore.getState().dismissNotice('septnet-union-grade-scope');
+  expect(first.useAppStore.getState().dismissedNotices).toEqual(['septnet-union-grade-scope']);
+  const raw = jest.mocked(first.storage.setItemAsync).mock.calls.at(-1)![1];
+  expect(JSON.parse(raw).dismissedNotices).toEqual(['septnet-union-grade-scope']);
+  const second = await freshStore(raw);
+  await second.hydratePreferences();
+  expect(second.useAppStore.getState().dismissedNotices).toEqual(['septnet-union-grade-scope']);
+  const broken = await freshStore('{"dismissedNotices":[1,"x",null]}');
+  await broken.hydratePreferences();
+  expect(broken.useAppStore.getState().dismissedNotices).toEqual(['x']);
 });

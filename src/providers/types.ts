@@ -1,4 +1,4 @@
-import type { AnswerSheet, AuthSession, ClaimCandidate, ExamResult, ExamSummary, ProviderCapabilities, StudentProfile, SubjectDetail, UnclaimedExam } from '@/src/domain/models';
+import type { AnswerSheet, AuthSession, ClaimCandidate, EssayDetail, ExamResult, ExamSummary, ProviderCapabilities, StudentProfile, SubjectDetail, SubjectStatistic, UnclaimedExam } from '@/src/domain/models';
 export interface ScoreProviderMetadata { id: string; name: string; /** 仅用于平台选择界面的名称补充。 */ remark?: string; description: string; officialDomain?: string; }
 export interface ProviderRequestOptions { signal?: AbortSignal; }
 export interface ScoreProvider { readonly metadata: ScoreProviderMetadata; readonly capabilities: ProviderCapabilities; authenticate(account: string, password: string): Promise<AuthSession>; authenticateWithToken?(token: string): Promise<AuthSession>; getProfile(session: AuthSession, options?: ProviderRequestOptions): Promise<StudentProfile>; getProfiles?(session: AuthSession, options?: ProviderRequestOptions): Promise<StudentProfile[]>; selectProfile?(session: AuthSession, profileId: string, options?: ProviderRequestOptions): Promise<AuthSession>; getExamList(session: AuthSession, page?: { offset?: number }, options?: ProviderRequestOptions): Promise<ExamSummary[]>; getExamResult(session: AuthSession, examId: string, options?: ProviderRequestOptions): Promise<ExamResult>; logout(session: AuthSession): Promise<void>;
@@ -16,6 +16,12 @@ export interface ScoreProvider { readonly metadata: ScoreProviderMetadata; reado
   /** 可选能力：带分数水印的答题卡（图片上标注各题得分）；与 `getAnswerSheets` 的无水印版相互独立。 */
   getWatermarkedAnswerSheets?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]>;
   getSubjectDetail?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<SubjectDetail>;
+  /** 可选能力：本科目试卷原卷扫描图（多页）；与答题卡是独立图片集，使用独立查询键。 */
+  getPaperImages?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]>;
+  /** 可选能力：作文题干与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
+  getEssayDetail?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<EssayDetail>;
+  /** 可选能力：科目级统计（如参考人数）。懒加载，避免拖慢科目详情；不可用时返回空数组。 */
+  getSubjectStatistics?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<SubjectStatistic[]>;
   /** 按需获取本人主观题作答切图；不批量预取短期链接。 */
   getQuestionAnswerSheet?(session: AuthSession, examId: string, subjectId: string, questionId: string, options?: ProviderRequestOptions): Promise<AnswerSheet>;
   refreshSession?(session: AuthSession): Promise<AuthSession>;

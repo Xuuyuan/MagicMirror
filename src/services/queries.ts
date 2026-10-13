@@ -1,6 +1,6 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
-import type { AnswerSheet, StudentProfile, SubjectDetail } from '@/src/domain/models';
-import type { ScoreProvider } from '@/src/providers/types';
+import type { AnswerSheet, AuthSession, EssayDetail, ExamResult, StudentProfile, SubjectDetail, SubjectStatistic } from '@/src/domain/models';
+import type { ProviderRequestOptions, ScoreProvider } from '@/src/providers/types';
 import { withAccount } from './accounts';
 import { throwIfAborted } from './http';
 
@@ -11,6 +11,9 @@ export const accountQueryKeys = {
   subject: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'subject', examId, subjectId] as const,
   sheets: (accountId: string, revision: string | undefined, examId: string, subjectId?: string) => ['account', accountId, revision, 'sheets', examId, subjectId] as const,
   watermarkedSheets: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'watermarked-sheets', examId, subjectId] as const,
+  papers: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'papers', examId, subjectId] as const,
+  essay: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'essay', examId, subjectId] as const,
+  subjectStatistics: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'subject-statistics', examId, subjectId] as const,
   unclaimedExams: (accountId?: string, revision?: string) => ['account', accountId, revision, 'unclaimed-exams'] as const,
 };
 
@@ -55,26 +58,39 @@ export function subjectQueryOptions(queryClient: QueryClient, accountId: string,
   });
 }
 
-type SheetFetcher = NonNullable<ScoreProvider['getAnswerSheets']> | NonNullable<ScoreProvider['getWatermarkedAnswerSheets']>;
+type SubjectResourceFetcher<T> = (session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions) => Promise<T>;
+
+/**
+ * 科目级附加资源的公共骨架：仅当 Provider 支持对应方法时才连带拉取成绩缓存；
+ * 方法缺失时返回 fallback（能力探测在 queryFn 内，界面不感知平台差异）。
+ */
+function subjectResourceQueryOptions<T>(
+  queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string,
+  queryKey: readonly unknown[], enabled: boolean,
+  pick: (provider: ScoreProvider) => SubjectResourceFetcher<T> | undefined,
+  subjectId: string, fallback: T,
+) {
+  return queryOptions({
+    queryKey,
+    enabled: enabled && !!revision,
+    queryFn: ({ signal }): Promise<T> => withAccount(accountId, async (provider, session, requestSignal) => {
+      const fetchResource = pick(provider);
+      if (!fetchResource) return fallback;
+      const result = await queryClient.fetchQuery(examResultQueryOptions(accountId, revision, examId));
+      throwIfAborted(requestSignal);
+      return fetchResource(session, examId, subjectId, result, { signal: requestSignal });
+    }, signal),
+  });
+}
 
 /** 无水印/带水印答题卡查询的公共骨架：仅当 Provider 支持对应方法时才连带拉取成绩。 */
 function sheetQueryOptions(
   queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string,
   queryKey: readonly unknown[], enabled: boolean,
-  pick: (provider: ScoreProvider) => SheetFetcher | undefined,
+  pick: (provider: ScoreProvider) => SubjectResourceFetcher<AnswerSheet[]> | undefined,
   subjectId: string,
 ) {
-  return queryOptions({
-    queryKey,
-    enabled: enabled && !!revision,
-    queryFn: ({ signal }) => withAccount(accountId, async (provider, session, requestSignal) => {
-      const fetchSheets = pick(provider);
-      if (!fetchSheets) return [] as AnswerSheet[];
-      const result = await queryClient.fetchQuery(examResultQueryOptions(accountId, revision, examId));
-      throwIfAborted(requestSignal);
-      return fetchSheets(session, examId, subjectId, result, { signal: requestSignal });
-    }, signal),
-  });
+  return subjectResourceQueryOptions<AnswerSheet[]>(queryClient, accountId, revision, examId, queryKey, enabled, pick, subjectId, []);
 }
 
 export function answerSheetsQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId?: string) {
@@ -88,6 +104,27 @@ export function watermarkedAnswerSheetsQueryOptions(queryClient: QueryClient, ac
   return sheetQueryOptions(queryClient, accountId, revision, examId, accountQueryKeys.watermarkedSheets(accountId, revision, examId, subjectId), true,
     (provider) => provider.getWatermarkedAnswerSheets,
     subjectId);
+}
+
+/** 试卷原卷扫描图；与答题卡、水印答题卡都是独立图片集，各自使用独立查询键。地址是短期签名直链，过期由界面重新获取。 */
+export function paperImagesQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId: string) {
+  return sheetQueryOptions(queryClient, accountId, revision, examId, accountQueryKeys.papers(accountId, revision, examId, subjectId), !!subjectId,
+    (provider) => provider.getPaperImages,
+    subjectId);
+}
+
+/** 作文题干与本人作答扫描图；仅在科目确有作文数据时启用（enabled 由界面按 providerContext 判断）。 */
+export function essayQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId: string, enabled: boolean) {
+  return subjectResourceQueryOptions<EssayDetail>(queryClient, accountId, revision, examId,
+    accountQueryKeys.essay(accountId, revision, examId, subjectId), enabled,
+    (provider) => provider.getEssayDetail, subjectId, { answerSheets: [] });
+}
+
+/** 科目级统计（如参考人数）；懒加载，与科目详情相互独立。 */
+export function subjectStatisticsQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId: string, enabled: boolean) {
+  return subjectResourceQueryOptions<SubjectStatistic[]>(queryClient, accountId, revision, examId,
+    accountQueryKeys.subjectStatistics(accountId, revision, examId, subjectId), enabled,
+    (provider) => provider.getSubjectStatistics, subjectId, []);
 }
 
 /** 待认领考试列表；首页与认领页共用同一份缓存。 */

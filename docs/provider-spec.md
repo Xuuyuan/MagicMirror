@@ -16,8 +16,14 @@ Provider 可选提供 `getProfiles` / `selectProfile`，支持同一账号下切
 
 账号记录使用 `authMode` 区分密码和 Token 登录，认证信息保存在 SecureStore 中。Token 无自动续期能力；官方返回已映射的会话失效码后，本地将该会话标记过期，后续请求提示更新 Token。网络错误不标记为过期。编辑 Token 账号默认打开 Token 模式，不回显已有 Token；换成密码登录可恢复密码自动登录能力。Token 登录不会扩大官方账号的数据权限，也不能保证考试列表返回历史考试。
 
+列表中的答题卡/试卷扫描图按显示尺寸解码（`AdaptiveSheetImage` 使用 `resizeMethod="resize"`），查看器保持原分辨率：A4 扫描件解码约 14.8MB/张，按原分辨率渲染多页会超出 Android 堆上限并导致图片不显示（RN 也把 `none` 标为不安全）。
+
 答题卡图片若需要会话请求头，Provider 在 `AnswerSheet.headers` 中返回所需请求头即可；界面层负责按请求头下载到缓存后再渲染，因为 React Native Android 的 `Image` 组件不会发送自定义请求头。
 
 可选能力 `getWatermarkedAnswerSheets` 返回带分数水印的答题卡（图片上标注各题得分），与 `getAnswerSheets` 的无水印版是两套独立地址：无水印版用于「查看答题卡」页，水印版用于单科详情的逐题得分区（平台不提供逐题得分时作为替代）。两者分别使用独立的查询键，不得互相覆盖。七天学堂通过 `Question/AnswerCardUrl` 的 `isWatermark` 参数选择版本。
+
+可选能力 `getPaperImages` 返回本科目试卷原卷的多页扫描图，与答题卡、水印答题卡同样是独立图片集，使用独立查询键；短期签名地址由界面在加载失败时重新获取，Provider 不持久化。可选能力 `getEssayDetail` 返回作文题干与本人作答扫描图，无数据时返回空 `answerSheets` 而非报错；作答图由界面以「查看本人作答」按钮直接打开放大查看，不内嵌列表。报告卡片通过可选字段 `ReportSection.placement: 'essay'` 声明并入作文卡片（不出现独立标题）；未声明 `placement` 一律按独立报告卡片渲染，未识别该字段的界面会退回独立卡片展示。可选能力 `getSubjectStatistics` 返回科目级统计（如参考人数、均分），单独懒加载以免拖慢科目详情，平台不可用时返回空数组；界面把它与 `SubjectDetail.statistics` 合并展示，不区分数据来自详情还是该方法。含具体含义的统计（如「学校参考人数」）必须先在官方界面或项目负责人处确认语义后才能展示，不得由未对照字段推断。`SubjectStatistic.rank` + `rankMax` 表达区间名次；由等第区间与人数换算出的估算值必须带 `estimate: true`，界面会在标签后加「（预估）」，且平台的精确名次能力（`capabilities.ranking`）不得因此声明为可用。
+
+`ExamResult.notice` 是 Provider 解释的页面级提示（`{ id, text }`），界面显示在考试详情页顶部并提供关闭入口，关闭状态按「考试 + 提示 id」存在本地偏好里（`dismissedNotices`，键形如 `<examId>:<noticeId>`），因此同一提示在不同考试中各自独立，Provider 不得用它承载不看就会误解结果的必要信息以外的内容，也不得依赖它组织页面结构。
 
 `ExamSummary.category` 是考试性质的展示标签（如「周测」「月考」），由平台原样下发；平台未给出时七天学堂兜底为「其它」，其他平台保持未定义。`ExamResult.participantCount` 为考生人数；含作文科目（语文/英语）的作文年级均分与最高分通过 `SubjectScore.providerContext` 的 `essayAvg`、`essayMax` 传递。

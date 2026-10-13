@@ -7,8 +7,8 @@
 //   set SEPTNET_PASSWORD=<明文口令>
 //   npx jest --runInBand --testMatch "<rootDir>/src/__tests__/*.check.ts"
 /**
- * 只执行**只读**查询：登录 → 学生信息 → 考试列表 → 一场成绩。
- * 不做任何写操作（不调用 exam/SetView、不认领、不修改资料）。
+ * 只执行**只读**查询：登录 → 学生信息 → 考试列表 → 一场成绩 → 试卷原卷/作文/调试字段。
+ * 不做任何写操作（不调用 exam/SetView、不认领、不修改资料、不生成 AI 报告、不发短信）。
  */
 import { createSeptnetProvider } from '@/src/providers/septnet';
 
@@ -63,7 +63,28 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
       subjects: result.subjects.length,
       hasTotal: typeof result.totalScore === 'number',
       hasPublishedAt: typeof result.publishedAt === 'string',
+      notice: result.notice?.id ?? null,
       subjectFields: result.subjects.map((subject) => Object.keys(subject)),
     }));
+
+    // 小程序接口面补充能力（原卷/作文/调试字段）：逐项独立校验，缺数据不算失败。
+    const scorable = result.subjects.filter((subject) => subject.score !== undefined);
+    const target = scorable.find((subject) => subject.subject === '语文') ?? scorable[0];
+    if (target) {
+      if (provider.getPaperImages) {
+        const pages = await provider.getPaperImages(session, result.examId, target.subject, result);
+        console.log('[live] 试卷原卷页数', pages.length);
+        for (const sheet of pages) expect(sheet.url.startsWith('https://')).toBe(true);
+      }
+      if (provider.getEssayDetail) {
+        const essay = await provider.getEssayDetail(session, result.examId, target.subject, result);
+        console.log('[live] 作文数据', JSON.stringify({ hasPrompt: !!essay.prompt, promptLength: essay.prompt?.length ?? 0, answerSheets: essay.answerSheets.length }));
+        for (const sheet of essay.answerSheets) expect(sheet.url.startsWith('https://')).toBe(true);
+      }
+      if (provider.getSubjectStatistics) {
+        const statistics = await provider.getSubjectStatistics(session, result.examId, target.subject, result);
+        console.log('[live] 科目统计', JSON.stringify(statistics));
+      }
+    }
   });
 });

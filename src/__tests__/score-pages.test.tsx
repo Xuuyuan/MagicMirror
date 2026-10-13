@@ -4,9 +4,10 @@ import Result from '../../app/result';
 import { ExamMeta } from '../../app/index';
 import Subject from '../../app/subject';
 import { QuestionImagePreview } from '../question-image-preview';
-import type { ExamResult, SubjectDetail } from '../domain/models';
+import type { AnswerSheet, ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
 import { useAppStore } from '../state/app';
+import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
 import type { GradeDisplayMode } from '../services/score-display';
 
@@ -26,19 +27,26 @@ jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');
-  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode;
-    setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void;
-  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both',
+  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; dismissedNotices: string[];
+    setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void; dismissNotice: (id: string) => void;
+  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [],
     setShowAbsentSubjects: showAbsentSubjects => set({ showAbsentSubjects }),
     setSeptnetGradeDisplay: septnetGradeDisplay => set({ septnetGradeDisplay }),
+    dismissNotice: id => set(state => ({ dismissedNotices: [...state.dismissedNotices, id] })),
   })) };
 });
+let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
+let mockStatistics: SubjectStatistic[] = [];
+let mockSheets: { data?: AnswerSheet[]; isPending?: boolean; error?: unknown } = { data: [] };
+const mockRefetch = jest.fn();
 jest.mock('../services/queries', () => ({
   examResultQueryOptions: () => ({ data: mockResult }),
   subjectQueryOptions: () => ({ data: mockSubject }),
-  watermarkedAnswerSheetsQueryOptions: () => ({ data: [] }),
+  watermarkedAnswerSheetsQueryOptions: () => ({ ...mockSheets, refetch: mockRefetch }),
+  essayQueryOptions: () => ({ data: mockEssay }),
+  subjectStatisticsQueryOptions: () => ({ data: mockStatistics }),
 }));
-jest.mock('@tanstack/react-query', () => ({ useQuery: (options: object) => ({ ...options, isPending: false }), useQueryClient: () => ({}) }));
+jest.mock('@tanstack/react-query', () => ({ useQuery: (options: { isPending?: boolean }) => ({ ...options, isPending: options.isPending ?? false }), useQueryClient: () => ({}) }));
 jest.mock('react-native', () => ({
   Modal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   StyleSheet: { absoluteFill: {} },
@@ -51,7 +59,7 @@ jest.mock('react-native-paper', () => {
   Menu.Item = function MenuItem({ title, onPress, leadingIcon }: { title: string; onPress: () => void; leadingIcon?: string }) { return <button role="menuitem" data-selected={leadingIcon === 'check'} onClick={onPress}>{title}</button>; };
   return {
     List, useTheme: () => ({ colors: {} }),
-    Text: ({ children, variant }: { children: ReactNode; variant?: string }) => <span data-variant={variant}>{children}</span>,
+    Text: ({ children, variant, numberOfLines, adjustsFontSizeToFit, style }: { children: ReactNode; variant?: string; numberOfLines?: number; adjustsFontSizeToFit?: boolean; style?: unknown }) => <span data-variant={variant} data-lines={numberOfLines} data-fit={adjustsFontSizeToFit} data-style={JSON.stringify(style)}>{children}</span>,
     Button: ({ children, onPress, accessibilityLabel }: { children: ReactNode; onPress?: () => void; accessibilityLabel?: string }) => <button aria-label={accessibilityLabel} onClick={onPress}>{children}</button>,
     Checkbox: { Item: () => null },
     Menu,
@@ -75,7 +83,9 @@ let root: Root;
 beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
-  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both' });
+  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [] });
+  mockEssay = { answerSheets: [] };
+  mockStatistics = [];
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -148,7 +158,10 @@ it('七天科目页面按题型独立展开分布，显示百分比且不标记�
       { th: '2', sort: 2, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '100' }] }])!];
   try {
     await act(async () => root.render(<Subject />));
-    expect(container.textContent).toContain('作文统计个人得分0分满分60分年级均分35分最高分55分更高分人数20人');
+    // 作文统计已并入默认收缩的「作文」卡片：展开后与题干、作答图同卡展示。
+    expect(container.textContent).not.toContain('个人得分');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
+    expect(container.textContent).toContain('个人得分0分满分60分年级均分35分最高分55分更高分人数20人');
     expect(container.textContent).not.toContain('考试小结');
     expect(container.textContent).not.toContain('<span>');
     expect(container.textContent).toContain('选项分布 · 1题');
@@ -158,8 +171,10 @@ it('七天科目页面按题型独立展开分布，显示百分比且不标记�
     expect(container.textContent).toContain('第 1 题A0.25%B99.75%');
     expect(container.textContent).not.toContain('第 2 题');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
-    expect(container.textContent).toContain('第 2 题零分0%满分(4)100%');
-    expect(container.querySelector('[aria-label="第 2 题 零分 0%"] [data-style*="0%"]')).not.toBeNull();
+    expect(container.textContent).toContain('第 2 题满分(4)100%');
+    // 0% 的区间没有信息量：整行不渲染，只剩其余区间。
+    expect(container.textContent).not.toContain('零分');
+    expect(container.querySelector('[aria-label="第 2 题 零分 0%"]')).toBeNull();
     expect(container.querySelector('[aria-label="第 2 题 满分(4) 100%"] [data-style*="100%"]')).not.toBeNull();
     expect(container.textContent).not.toContain('正确答案：A');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click());
@@ -192,6 +207,21 @@ it('分布先显示十题，显示全部后可恢复；收起再展开也恢复�
     expect(container.textContent).not.toContain('第 1 题');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click());
     expect(container.textContent).not.toContain('第 11 题');
+  } finally { delete mockSubject.reportSections; }
+});
+
+it('得分区间分布隐藏 0% 区间，全为 0% 的题目整题略过且题数据此统计', async () => {
+  mockSubject.reportSections = [distributionSection([
+    { th: '3', sort: 3, distri: [{ key: '零分', value: '0' }, { key: '1-2分', value: '0.25' }, { key: '满分(4)', value: '99.75' }] },
+    { th: '4', sort: 4, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '0' }] },
+  ])!];
+  try {
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('得分区间分布 · 1题');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
+    expect(container.textContent).toContain('第 3 题1-2分0.25%满分(4)99.75%');
+    expect(container.textContent).not.toContain('零分');
+    expect(container.textContent).not.toContain('第 4 题');
   } finally { delete mockSubject.reportSections; }
 });
 
@@ -242,6 +272,19 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   await act(async () => cards[0].click());
   expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学' } });
   expect(mockResult.subjects.map((item) => item.subject)).toEqual(originalOrder);
+});
+
+it('科目卡片分数行禁止换行，赋分与原始分同排，宽度不足时由字号自适应', async () => {
+  await act(async () => root.render(<Result />));
+  const card = container.querySelector<HTMLElement>('[aria-label="查看化学详情"]')!;
+  const row = Array.from(card.querySelectorAll<HTMLElement>('[data-style]')).find((node) => node.getAttribute('data-style')!.includes('"alignItems":"baseline"'))!;
+  expect(JSON.parse(row.getAttribute('data-style')!)).toEqual({ flexDirection: 'row', alignItems: 'baseline', gap: 8 });
+  expect(row.textContent).toBe('65 / 100原始 20');
+  const score = row.querySelector<HTMLElement>('[data-variant="headlineSmall"]')!;
+  expect(score.getAttribute('data-lines')).toBe('1');
+  expect(score.getAttribute('data-fit')).toBe('true');
+  expect(JSON.parse(score.getAttribute('data-style')!)).toEqual({ flexShrink: 1 });
+  expect(row.querySelector<HTMLElement>('[data-variant="bodySmall"]')!.getAttribute('data-lines')).toBe('1');
 });
 
 it('排名格子在名次后显示班级和学校击败率', async () => {
@@ -375,4 +418,114 @@ it('综合分析默认折叠，展开显示数值与对比，收起后保留说�
     expect(container.textContent).toContain('虚构说明');
     expect(toggle.dataset.icon).toBe('chevron-down');
   } finally { delete mockResult.reportSections; }
+});
+
+it('作文卡片按数据出现，原卷入口与科目统计按能力显示', async () => {
+  const get = providerRegistry.get as unknown as jest.Mock;
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).not.toContain('查看原卷');
+  expect(container.textContent).not.toContain('作文');
+
+  get.mockReturnValue({ getEssayDetail: () => undefined, getDebugSubjectFields: () => undefined, getPaperImages: () => undefined });
+  mockEssay = { prompt: '虚构作文题干', answerSheets: [{ subject: '化学', url: 'https://example.com/essay.jpg', watermarked: true }] };
+  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).toContain('查看原卷');
+  expect(container.textContent).not.toContain('虚构作文题干');
+  const essayToggle = container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!;
+  expect(essayToggle.dataset.icon).toBe('chevron-down');
+  await act(async () => essayToggle.click());
+  expect(container.textContent).toContain('虚构作文题干');
+  expect(container.textContent).toContain('查看本人作答');
+  await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '查看本人作答')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+  expect(container.textContent).not.toContain('虚构作文题干');
+});
+
+it('答题详情在没有逐题与答题卡时给出说明，加载失败可重试，平台已说明时不重复', async () => {
+  const get = providerRegistry.get as unknown as jest.Mock;
+  try {
+    // 加载中保持原样，不提前给结论。
+    mockSheets = { data: undefined, isPending: true };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('答题详情');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+    // 未声明带分数标注答题卡的平台只说明逐题得分缺失。
+    mockSheets = { data: [] };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本科目的逐题得分。');
+    // 七天学堂这类会去取带分数标注答题卡的平台，缺图时把答题卡一并说明。
+    get.mockReturnValue({ getWatermarkedAnswerSheets: () => undefined });
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本科目的答题卡与逐题得分。');
+    // 平台确实给了答题卡时保持原来的入口。
+    mockSheets = { data: [{ subject: '化学', url: 'https://example.com/sheet.jpg', watermarked: true }] };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供逐题得分，可查看带分数标注的答题卡（双击放大）：');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+    // 取答题卡失败时提示并可重试，而不是留白。
+    mockSheets = { error: new Error('fictional') };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('答题卡加载失败。');
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '重试')!.click());
+    expect(mockRefetch).toHaveBeenCalled();
+    // 平台自己已说明逐题数据缺失时不再重复一句。
+    mockSheets = { data: [] };
+    mockSubject.questionNotice = '平台未提供本场科目的逐题数据。';
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本场科目的逐题数据。');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+  } finally {
+    delete mockSubject.questionNotice;
+    mockSheets = { data: [] };
+    get.mockReturnValue(undefined);
+  }
+});
+
+it('科目统计：人数与相邻排名同字号，不重复显示单位', async () => {
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).not.toContain('学校参考');
+  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).toContain('学校参考人数584');
+  expect(container.textContent).toContain('学校排名（预估）164~211');
+  // 与「科目各范围排名以大字号显示名次，小字号显示总人数」用的是同一套排版约定。
+  const big = Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(node => node.textContent);
+  expect(big).toEqual(expect.arrayContaining(['584', '164~211']));
+});
+
+it('作文统计随科目详情到达即并入作文卡片，不依赖作文懒加载', async () => {
+  mockSubject.reportSections = [essaySection({ score: '41.5', full: '60', avg: '38', max: '55' })!];
+  try {
+    // Provider 未提供 getEssayDetail 时，统计仍应展示（数据来自科目详情）。
+    await act(async () => root.render(<Subject />));
+    expect(container.querySelector('[aria-label="展开作文"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('个人得分');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
+    expect(container.textContent).toContain('个人得分41.5分满分60分年级均分38分最高分55分');
+    expect(container.textContent).not.toContain('作文统计');
+    expect(container.textContent).not.toContain('正在加载作文题干与作答…');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+    expect(container.textContent).not.toContain('个人得分');
+  } finally { delete mockSubject.reportSections; }
+});
+
+it('考试详情顶部提示按单场考试记忆关闭状态', async () => {
+  await act(async () => root.render(<Result />));
+  expect(container.textContent).not.toContain('等第及对应的百分比');
+
+  const notice = { id: 'septnet-union-grade-scope', text: '等第及对应的百分比表示的是在学校内的排名比例。' };
+  mockResult.notice = notice;
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('等第及对应的百分比表示的是在学校内的排名比例。');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭提示"]')!.click());
+    expect(container.textContent).not.toContain('等第及对应的百分比');
+    // 关闭状态键为「考试 + 提示」：本场不再显示。
+    expect(useAppStore.getState().dismissedNotices).toEqual(['fictional-exam:septnet-union-grade-scope']);
+    // 换一场考试（不同 examId）时同一条提示仍会出现。
+    mockResult.examId = 'fictional-exam-2';
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('等第及对应的百分比');
+  } finally { delete mockResult.notice; mockResult.examId = 'fictional-exam'; }
 });
