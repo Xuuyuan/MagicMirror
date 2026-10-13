@@ -4,7 +4,7 @@ import Result from '../../app/result';
 import { ExamMeta } from '../../app/index';
 import Subject from '../../app/subject';
 import { QuestionImagePreview } from '../question-image-preview';
-import type { ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
+import type { AnswerSheet, ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
 import { useAppStore } from '../state/app';
 import { providerRegistry } from '../providers/registry';
@@ -37,14 +37,16 @@ jest.mock('../state/app', () => {
 });
 let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
 let mockStatistics: SubjectStatistic[] = [];
+let mockSheets: { data?: AnswerSheet[]; isPending?: boolean; error?: unknown } = { data: [] };
+const mockRefetch = jest.fn();
 jest.mock('../services/queries', () => ({
   examResultQueryOptions: () => ({ data: mockResult }),
   subjectQueryOptions: () => ({ data: mockSubject }),
-  watermarkedAnswerSheetsQueryOptions: () => ({ data: [] }),
+  watermarkedAnswerSheetsQueryOptions: () => ({ ...mockSheets, refetch: mockRefetch }),
   essayQueryOptions: () => ({ data: mockEssay }),
   subjectStatisticsQueryOptions: () => ({ data: mockStatistics }),
 }));
-jest.mock('@tanstack/react-query', () => ({ useQuery: (options: object) => ({ ...options, isPending: false }), useQueryClient: () => ({}) }));
+jest.mock('@tanstack/react-query', () => ({ useQuery: (options: { isPending?: boolean }) => ({ ...options, isPending: options.isPending ?? false }), useQueryClient: () => ({}) }));
 jest.mock('react-native', () => ({
   Modal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   StyleSheet: { absoluteFill: {} },
@@ -421,6 +423,46 @@ it('作文卡片按数据出现，原卷入口与科目统计按能力显示', a
   await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '查看本人作答')!.click());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
   expect(container.textContent).not.toContain('虚构作文题干');
+});
+
+it('答题详情在没有逐题与答题卡时给出说明，加载失败可重试，平台已说明时不重复', async () => {
+  const get = providerRegistry.get as unknown as jest.Mock;
+  try {
+    // 加载中保持原样，不提前给结论。
+    mockSheets = { data: undefined, isPending: true };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('答题详情');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+    // 未声明带分数标注答题卡的平台只说明逐题得分缺失。
+    mockSheets = { data: [] };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本科目的逐题得分。');
+    // 七天学堂这类会去取带分数标注答题卡的平台，缺图时把答题卡一并说明。
+    get.mockReturnValue({ getWatermarkedAnswerSheets: () => undefined });
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本科目的答题卡与逐题得分。');
+    // 平台确实给了答题卡时保持原来的入口。
+    mockSheets = { data: [{ subject: '化学', url: 'https://example.com/sheet.jpg', watermarked: true }] };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供逐题得分，可查看带分数标注的答题卡（双击放大）：');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+    // 取答题卡失败时提示并可重试，而不是留白。
+    mockSheets = { error: new Error('fictional') };
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('答题卡加载失败。');
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '重试')!.click());
+    expect(mockRefetch).toHaveBeenCalled();
+    // 平台自己已说明逐题数据缺失时不再重复一句。
+    mockSheets = { data: [] };
+    mockSubject.questionNotice = '平台未提供本场科目的逐题数据。';
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('平台未提供本场科目的逐题数据。');
+    expect(container.textContent).not.toContain('平台未提供本科目');
+  } finally {
+    delete mockSubject.questionNotice;
+    mockSheets = { data: [] };
+    get.mockReturnValue(undefined);
+  }
 });
 
 it('科目统计：人数与相邻排名同字号，不重复显示单位', async () => {
