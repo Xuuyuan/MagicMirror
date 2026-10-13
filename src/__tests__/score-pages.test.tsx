@@ -171,8 +171,10 @@ it('七天科目页面按题型独立展开分布，显示百分比且不标记�
     expect(container.textContent).toContain('第 1 题A0.25%B99.75%');
     expect(container.textContent).not.toContain('第 2 题');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
-    expect(container.textContent).toContain('第 2 题零分0%满分(4)100%');
-    expect(container.querySelector('[aria-label="第 2 题 零分 0%"] [data-style*="0%"]')).not.toBeNull();
+    expect(container.textContent).toContain('第 2 题满分(4)100%');
+    // 0% 的区间没有信息量：整行不渲染，只剩其余区间。
+    expect(container.textContent).not.toContain('零分');
+    expect(container.querySelector('[aria-label="第 2 题 零分 0%"]')).toBeNull();
     expect(container.querySelector('[aria-label="第 2 题 满分(4) 100%"] [data-style*="100%"]')).not.toBeNull();
     expect(container.textContent).not.toContain('正确答案：A');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click());
@@ -205,6 +207,21 @@ it('分布先显示十题，显示全部后可恢复；收起再展开也恢复�
     expect(container.textContent).not.toContain('第 1 题');
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click());
     expect(container.textContent).not.toContain('第 11 题');
+  } finally { delete mockSubject.reportSections; }
+});
+
+it('得分区间分布隐藏 0% 区间，全为 0% 的题目整题略过且题数据此统计', async () => {
+  mockSubject.reportSections = [distributionSection([
+    { th: '3', sort: 3, distri: [{ key: '零分', value: '0' }, { key: '1-2分', value: '0.25' }, { key: '满分(4)', value: '99.75' }] },
+    { th: '4', sort: 4, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '0' }] },
+  ])!];
+  try {
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('得分区间分布 · 1题');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
+    expect(container.textContent).toContain('第 3 题1-2分0.25%满分(4)99.75%');
+    expect(container.textContent).not.toContain('零分');
+    expect(container.textContent).not.toContain('第 4 题');
   } finally { delete mockSubject.reportSections; }
 });
 

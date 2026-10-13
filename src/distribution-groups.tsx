@@ -5,18 +5,29 @@ import type { DistributionGroup } from './domain/models';
 
 const previewCount = 10;
 
-function optionColumns(bins: DistributionGroup['questions'][number]['bins']) {
+type Bins = DistributionGroup['questions'][number]['bins'];
+
+function optionColumns(bins: Bins) {
   return bins.filter(bin => !['-', '—'].includes(bin.value.trim()));
+}
+
+/** 得分区间分布里人数比例为 0% 的区间没有信息量（只有标签和空条形），不显示。 */
+function scoreRangeRows(bins: Bins) {
+  return bins.filter(bin => bin.percent !== 0);
 }
 
 function Group({ group }: { group: DistributionGroup }) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const theme = useTheme();
-  const questions = showAll ? group.questions : group.questions.slice(0, previewCount);
+  // 隐藏区间后无行可显示的题目整题略过，题数与「显示全部」都以剩余题目为准。
+  const available = group.layout === 'bars'
+    ? group.questions.map(question => ({ ...question, bins: scoreRangeRows(question.bins) })).filter(question => question.bins.length)
+    : group.questions;
+  const questions = showAll ? available : available.slice(0, previewCount);
   return <View style={{ gap: 8 }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-      <Text variant="titleSmall">{group.title} · {group.questions.length}题</Text>
+      <Text variant="titleSmall">{group.title} · {available.length}题</Text>
       <IconButton style={{ margin: 0 }} icon={expanded ? 'chevron-up' : 'chevron-down'}
         accessibilityLabel={`${expanded ? '收起' : '展开'}${group.title}`}
         onPress={() => { setExpanded(value => !value); setShowAll(false); }} />
@@ -39,8 +50,8 @@ function Group({ group }: { group: DistributionGroup }) {
           </View>)}
         </View>}
       </View>)}
-      {group.questions.length > previewCount && <Button compact onPress={() => setShowAll(value => !value)}>
-        {showAll ? '仅显示前 10 题' : `显示全部 ${group.questions.length} 题`}
+      {available.length > previewCount && <Button compact onPress={() => setShowAll(value => !value)}>
+        {showAll ? '仅显示前 10 题' : `显示全部 ${available.length} 题`}
       </Button>}
     </>}
   </View>;
