@@ -57,7 +57,7 @@ jest.mock('react-native-paper', () => {
   Menu.Item = function MenuItem({ title, onPress, leadingIcon }: { title: string; onPress: () => void; leadingIcon?: string }) { return <button role="menuitem" data-selected={leadingIcon === 'check'} onClick={onPress}>{title}</button>; };
   return {
     List, useTheme: () => ({ colors: {} }),
-    Text: ({ children, variant }: { children: ReactNode; variant?: string }) => <span data-variant={variant}>{children}</span>,
+    Text: ({ children, variant, numberOfLines, adjustsFontSizeToFit, style }: { children: ReactNode; variant?: string; numberOfLines?: number; adjustsFontSizeToFit?: boolean; style?: unknown }) => <span data-variant={variant} data-lines={numberOfLines} data-fit={adjustsFontSizeToFit} data-style={JSON.stringify(style)}>{children}</span>,
     Button: ({ children, onPress, accessibilityLabel }: { children: ReactNode; onPress?: () => void; accessibilityLabel?: string }) => <button aria-label={accessibilityLabel} onClick={onPress}>{children}</button>,
     Checkbox: { Item: () => null },
     Menu,
@@ -253,6 +253,19 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   await act(async () => cards[0].click());
   expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学' } });
   expect(mockResult.subjects.map((item) => item.subject)).toEqual(originalOrder);
+});
+
+it('科目卡片分数行禁止换行，赋分与原始分同排，宽度不足时由字号自适应', async () => {
+  await act(async () => root.render(<Result />));
+  const card = container.querySelector<HTMLElement>('[aria-label="查看化学详情"]')!;
+  const row = Array.from(card.querySelectorAll<HTMLElement>('[data-style]')).find((node) => node.getAttribute('data-style')!.includes('"alignItems":"baseline"'))!;
+  expect(JSON.parse(row.getAttribute('data-style')!)).toEqual({ flexDirection: 'row', alignItems: 'baseline', gap: 8 });
+  expect(row.textContent).toBe('65 / 100原始 20');
+  const score = row.querySelector<HTMLElement>('[data-variant="headlineSmall"]')!;
+  expect(score.getAttribute('data-lines')).toBe('1');
+  expect(score.getAttribute('data-fit')).toBe('true');
+  expect(JSON.parse(score.getAttribute('data-style')!)).toEqual({ flexShrink: 1 });
+  expect(row.querySelector<HTMLElement>('[data-variant="bodySmall"]')!.getAttribute('data-lines')).toBe('1');
 });
 
 it('排名格子在名次后显示班级和学校击败率', async () => {
