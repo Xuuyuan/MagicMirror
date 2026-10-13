@@ -421,6 +421,7 @@ describe('Septnet Provider（无网络）', () => {
     expect(detail.questions).toBeUndefined();
     expect(detail.providerContext?.essayAvg).toBeUndefined();
     expect(detail.reportSections?.find(s => s.id === 'septnet-subject-info')).toBeUndefined();
+    expect(detail.reportSections?.find(s => s.id === 'septnet-essay')?.placement).toBe('essay');
     expect(detail.reportSections?.find(s => s.id === 'septnet-essay')?.highlights).toEqual(expect.arrayContaining([
       { label: '个人得分', value: '0', unit: '分' }, { label: '满分', value: '60', unit: '分' },
       { label: '更高分人数', value: '500', unit: '人' }, { label: '距最高分', value: '55', unit: '分' },
@@ -464,5 +465,127 @@ describe('Septnet Provider（无网络）', () => {
     expect(result.reportSections).toBeUndefined();
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     expect(calls.some(([url]) => url.endsWith('/Conclusion'))).toBe(false);
+  });
+
+  it('考试发布类型写入科目上下文（小程序作文接口需要）', async () => {
+    const { provider } = setup([
+      obfuscated(examList), sealed({ config: { CloseCF: false }, charge: {} }),
+      sealed({ ...subjects, exam_info: { ...subjects.exam_info, examPublishType: 0 } }),
+      sealed(report),
+    ]);
+    const result = await provider.getExamResult(detailSession, 'EXAM-0001-AAAA');
+    expect(result.subjects.find((item) => item.subject === '语文')?.providerContext?.examPublishType).toBe('0');
+  });
+
+  const paperBody = { subject: '语文', imgUrls: ['https://itembank.example.com/p1.jpg', 'https://itembank.example.com/p2.jpg'] };
+
+  it('试卷原卷：按科目请求小程序接口面，token 走参数不走请求头', async () => {
+    const { provider, transport } = setup([{ status: 200, message: 'success', data: [paperBody] }]);
+    const sheets = await provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult);
+    expect(sheets).toEqual([
+      { subject: '语文', subjectId: '语文', url: 'https://itembank.example.com/p1.jpg', watermarked: false },
+      { subject: '语文', subjectId: '语文', url: 'https://itembank.example.com/p2.jpg', watermarked: false },
+    ]);
+    const [url, init] = transport.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://szone-public.7net.cc/publicszoneui.service/QuestionNService/Paper');
+    const body = decodeURIComponent(String(init.body));
+    expect(body).toContain('token=TEST_TOKEN_0123456789');
+    expect(body).toContain('version=4.6.4');
+    expect(body).toContain('km=语文');
+    expect(body).toContain('srcKm=语文原卷');
+    expect((init.headers as Record<string, string>)['Token']).toBeUndefined();
+  });
+
+  it('试卷原卷：响应加密可解析，空数组与缺考科目分别降级', async () => {
+    const encrypted = setup([obfuscated([paperBody])]);
+    expect(await encrypted.provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult)).toHaveLength(2);
+    const empty = setup([{ status: 200, message: 'success', data: [] }]);
+    expect(await empty.provider.getPaperImages!(detailSession, cachedResult.examId, '语文', cachedResult)).toEqual([]);
+    const absent = setup([]);
+    await expect(absent.provider.getPaperImages!(detailSession, cachedResult.examId, '化学', cachedResult)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(absent.transport).not.toHaveBeenCalled();
+  });
+
+  const essayResult: ExamResult = { examId: 'EXAM-0001-AAAA', examName: '虚构考试', subjects: [{ subject: '语文', score: 90, maxScore: 150,
+    providerContext: { responseGuid: 'GUID-1', srcKm: '语文原卷', hasEssayInfo: 'true', essay_th: '21', examPublishType: '0' } }] };
+
+  it('作文：题干与本人作答切图各取一次小程序接口，参数含考号与题号', async () => {
+    const { provider, transport } = setup([
+      { status: 200, message: 'success', data: { th: '21', myAnswers: ['https://yjimage.example.com/a.jpg'] } },
+      { status: 200, message: 'success', data: { questionStemTxt: '虚构作文题干' } },
+    ]);
+    const essay = await provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult);
+    expect(essay.prompt).toBe('虚构作文题干');
+    expect(essay.answerSheets).toEqual([{ subject: '语文', subjectId: '语文', url: 'https://yjimage.example.com/a.jpg', watermarked: true }]);
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([url]) => url)).toEqual([
+      'https://szone-public.7net.cc/publicszoneui.service/QuestionNService/AIEssayReport',
+      'https://szone-public.7net.cc/publicszoneui.service/QuestionNService/EssayQuestionStem',
+    ]);
+    expect(decodeURIComponent(String(calls[0][1].body))).toContain('responseGuid=GUID-1');
+    expect(decodeURIComponent(String(calls[0][1].body))).toContain('examPublishType=0');
+    expect(decodeURIComponent(String(calls[1][1].body))).toContain('th=21');
+    expect(decodeURIComponent(String(calls[1][1].body))).toContain('responseGuid=GUID-1');
+  });
+
+  it('作文：一侧不可用不影响另一侧，无作答切图时退回 PDF 分页图', async () => {
+    const { provider } = setup([
+      { status: 200, message: 'success', data: { pdfImgs: ['https://yjimage.example.com/pdf-1.jpg'] } },
+      { status: 405 },
+    ]);
+    const essay = await provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult);
+    expect(essay.prompt).toBeUndefined();
+    expect(essay.answerSheets).toEqual([{ subject: '语文', subjectId: '语文', url: 'https://yjimage.example.com/pdf-1.jpg', watermarked: true }]);
+  });
+
+  it('作文：非作文科目不发请求；缺发布类型只取题干；缺作答记录时两个请求都不发', async () => {
+    const plain = setup([]);
+    const noEssay: ExamResult = { ...essayResult, subjects: [{ subject: '数学', score: 100, providerContext: {} }] };
+    expect(await plain.provider.getEssayDetail!(detailSession, noEssay.examId, '数学', noEssay)).toEqual({ answerSheets: [] });
+    expect(plain.transport).not.toHaveBeenCalled();
+    // 缺少 examPublishType 时作答接口不请求，题干接口按 responseGuid + 题号仍可用。
+    const noPublishType = setup([{ status: 200, message: 'success', data: { questionStemTxt: '仅题干' } }]);
+    const partial: ExamResult = { ...essayResult, subjects: [{ subject: '语文', score: 90, providerContext: { hasEssayInfo: 'true', essay_th: '21', srcKm: '语文原卷', responseGuid: 'GUID-1' } }] };
+    expect(await noPublishType.provider.getEssayDetail!(detailSession, partial.examId, '语文', partial)).toEqual({ prompt: '仅题干', answerSheets: [] });
+    expect(noPublishType.transport).toHaveBeenCalledTimes(1);
+    expect(decodeURIComponent(String((noPublishType.transport.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toContain('responseGuid=GUID-1');
+    const noResponseGuid = setup([{ status: 200, message: 'success', data: { questionStemTxt: '不应取到' } }]);
+    const missingGuid: ExamResult = { ...essayResult, subjects: [{ subject: '语文', score: 90, providerContext: { hasEssayInfo: 'true', essay_th: '21' } }] };
+    expect(await noResponseGuid.provider.getEssayDetail!(detailSession, missingGuid.examId, '语文', missingGuid)).toEqual({ answerSheets: [] });
+    expect(noResponseGuid.transport).not.toHaveBeenCalled();
+    const expired = setup([{ status: 401 }]);
+    await expect(expired.provider.getEssayDetail!(detailSession, essayResult.examId, '语文', essayResult)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+  });
+
+  const gradePayload = { report: { total: 584, myScore: '105.5', fullScore: '150', classAvg: '*', schoolAvg: '*', devScore: 0 } };
+
+  it('调试字段：先取考号再读旧版原始字段，不透出考号本身', async () => {
+    const { provider, transport } = setup([
+      obfuscated(examList),
+      { status: 200, message: 'success', data: { redirect: 0, studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: gradePayload },
+    ]);
+    const fields = await provider.getDebugSubjectFields!(detailSession, cachedResult.examId, '语文', cachedResult);
+    expect(fields).toEqual([
+      { label: 'report.total（语义未确认）', value: '584' },
+      { label: 'report.myScore', value: '105.5' },
+      { label: 'report.fullScore', value: '150' },
+      { label: 'report.classAvg', value: '*' },
+      { label: 'report.schoolAvg', value: '*' },
+      { label: 'report.devScore', value: '0' },
+    ]);
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[1][0]).toBe('https://szone-public.7net.cc/publicszoneui.service/AIErrorBookService/Redirect');
+    expect(calls[2][0]).toBe('https://szone-public.7net.cc/publicszoneui.service/QuestionService/SubjectGrade');
+    expect(JSON.stringify(fields)).not.toContain('FICTIONAL-CODE');
+  });
+
+  it('调试字段：链路不可用安静返回空数组，登录失效仍抛出', async () => {
+    const denied = setup([obfuscated(examList), { status: 404, message: '暂无数据' }]);
+    expect(await denied.provider.getDebugSubjectFields!(detailSession, cachedResult.examId, '语文', cachedResult)).toEqual([]);
+    const noStudentCode = setup([obfuscated(examList), { status: 200, message: 'success', data: {} }]);
+    expect(await noStudentCode.provider.getDebugSubjectFields!(detailSession, cachedResult.examId, '语文', cachedResult)).toEqual([]);
+    const expired = setup([obfuscated(examList), { status: 401 }]);
+    await expect(expired.provider.getDebugSubjectFields!(detailSession, cachedResult.examId, '语文', cachedResult)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
   });
 });

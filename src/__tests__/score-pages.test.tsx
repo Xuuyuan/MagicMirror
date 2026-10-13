@@ -7,6 +7,7 @@ import { QuestionImagePreview } from '../question-image-preview';
 import type { ExamResult, SubjectDetail } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
 import { useAppStore } from '../state/app';
+import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
 import type { GradeDisplayMode } from '../services/score-display';
 
@@ -26,17 +27,21 @@ jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');
-  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode;
+  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; debugMode: boolean;
     setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void;
-  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both',
+  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both', debugMode: false,
     setShowAbsentSubjects: showAbsentSubjects => set({ showAbsentSubjects }),
     setSeptnetGradeDisplay: septnetGradeDisplay => set({ septnetGradeDisplay }),
   })) };
 });
+let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
+let mockDebugFields: { label: string; value: string }[] = [];
 jest.mock('../services/queries', () => ({
   examResultQueryOptions: () => ({ data: mockResult }),
   subjectQueryOptions: () => ({ data: mockSubject }),
   watermarkedAnswerSheetsQueryOptions: () => ({ data: [] }),
+  essayQueryOptions: () => ({ data: mockEssay }),
+  debugSubjectFieldsQueryOptions: () => ({ data: mockDebugFields }),
 }));
 jest.mock('@tanstack/react-query', () => ({ useQuery: (options: object) => ({ ...options, isPending: false }), useQueryClient: () => ({}) }));
 jest.mock('react-native', () => ({
@@ -75,7 +80,9 @@ let root: Root;
 beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
-  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both' });
+  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', debugMode: false });
+  mockEssay = { answerSheets: [] };
+  mockDebugFields = [];
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -148,7 +155,10 @@ it('七天科目页面按题型独立展开分布，显示百分比且不标记�
       { th: '2', sort: 2, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '100' }] }])!];
   try {
     await act(async () => root.render(<Subject />));
-    expect(container.textContent).toContain('作文统计个人得分0分满分60分年级均分35分最高分55分更高分人数20人');
+    // 作文统计已并入默认收缩的「作文」卡片：展开后与题干、作答图同卡展示。
+    expect(container.textContent).not.toContain('个人得分');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
+    expect(container.textContent).toContain('个人得分0分满分60分年级均分35分最高分55分更高分人数20人');
     expect(container.textContent).not.toContain('考试小结');
     expect(container.textContent).not.toContain('<span>');
     expect(container.textContent).toContain('选项分布 · 1题');
@@ -375,4 +385,47 @@ it('综合分析默认折叠，展开显示数值与对比，收起后保留说�
     expect(container.textContent).toContain('虚构说明');
     expect(toggle.dataset.icon).toBe('chevron-down');
   } finally { delete mockResult.reportSections; }
+});
+
+it('作文与调试字段按数据与调试模式出现，原卷入口按能力显示', async () => {
+  const get = providerRegistry.get as unknown as jest.Mock;
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).not.toContain('查看原卷');
+  expect(container.textContent).not.toContain('作文');
+
+  get.mockReturnValue({ getEssayDetail: () => undefined, getDebugSubjectFields: () => undefined, getPaperImages: () => undefined });
+  mockEssay = { prompt: '虚构作文题干', answerSheets: [{ subject: '化学', url: 'https://example.com/essay.jpg', watermarked: true }] };
+  mockDebugFields = [{ label: 'report.total（语义未确认）', value: '584' }];
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).toContain('查看原卷');
+  expect(container.textContent).not.toContain('虚构作文题干');
+  const essayToggle = container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!;
+  expect(essayToggle.dataset.icon).toBe('chevron-down');
+  await act(async () => essayToggle.click());
+  expect(container.textContent).toContain('虚构作文题干');
+  expect(container.textContent).toContain('查看本人作答');
+  await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '查看本人作答')!.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+  expect(container.textContent).not.toContain('虚构作文题干');
+  expect(container.textContent).not.toContain('report.total');
+
+  useAppStore.setState({ debugMode: true });
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).toContain('report.total（语义未确认）584');
+});
+
+it('作文统计随科目详情到达即并入作文卡片，不依赖作文懒加载', async () => {
+  mockSubject.reportSections = [essaySection({ score: '41.5', full: '60', avg: '38', max: '55' })!];
+  try {
+    // Provider 未提供 getEssayDetail 时，统计仍应展示（数据来自科目详情）。
+    await act(async () => root.render(<Subject />));
+    expect(container.querySelector('[aria-label="展开作文"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('个人得分');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
+    expect(container.textContent).toContain('个人得分41.5分满分60分年级均分38分最高分55分');
+    expect(container.textContent).not.toContain('作文统计');
+    expect(container.textContent).not.toContain('正在加载作文题干与作答…');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+    expect(container.textContent).not.toContain('个人得分');
+  } finally { delete mockSubject.reportSections; }
 });

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ecb, gcm } from '@noble/ciphers/aes.js';
 import { getRandomBytes } from 'expo-crypto';
-import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type ReportSection, type UnclaimedExam } from '../domain/models';
+import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type UnclaimedExam } from '../domain/models';
 import { distributionSection, essaySection } from './septnet-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
@@ -25,6 +25,8 @@ export { base64ToBytes, bytesToBase64, bytesToUtf8, numericScore, utf8ToBytes } 
  */
 const host = 'https://szone-my.7net.cc/';
 const scoreHost = 'https://szone-score.7net.cc/';
+// 小程序接口面：明文表单 + token/version 参数，与 App 登录共用同一 token（见 analysis/qitianxuetang/interface-audit.md）。
+const publicHost = 'https://szone-public.7net.cc/';
 const version = '4.6.4';
 // 实测：App 用 WebView UA 发请求；固定为该形态即可通过。
 const userAgent = 'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) AppleWebKit/537.36'
@@ -124,6 +126,23 @@ const essayResponseSchema = z.object({ essayThInfo: essaySchema.optional() });
 const distributionSchema = z.array(z.object({ th: z.string().min(1), sort: z.number().finite().optional(),
   distri: z.array(z.object({ key: z.string(), value: z.string() })),
 }));
+// 试卷原卷：按科目下发的扫描图地址（itembank OSS 签名直链，实测短期有效）。
+const paperSchema = z.array(z.object({ subject: z.string().min(1), imgUrls: z.array(z.string().min(1)).optional() }));
+// 作文：作答切图（myAnswers）与得分统计；pdf 相关字段实测多为空，同样保守解析。
+const essayReportSchema = z.object({
+  th: z.string().optional(), score: z.string().optional(), full: z.string().optional(),
+  avg: z.string().optional(), max: z.string().optional(), diff: z.string().optional(), highCount: z.string().optional(),
+  myAnswers: z.array(z.string().min(1)).optional(), pdfImgs: z.array(z.string().min(1)).optional(),
+});
+const essayStemSchema = z.object({ questionStemTxt: z.string().optional(), uploadImg: z.string().optional() });
+// 旧版接口原始字段：未与官方 UI 对照语义，仅在调试模式下展示，不能作为正式数据使用。
+const subjectGradeDebugSchema = z.object({
+  report: z.object({
+    total: z.number().finite().optional(), myScore: z.string().optional(), fullScore: fullScoreSchema,
+    classAvg: z.string().optional(), schoolAvg: z.string().optional(), devScore: z.number().finite().optional(),
+  }).optional(),
+});
+const studentCodeSchema = z.object({ studentCode: z.string().optional() });
 
 function parse<T>(schema: z.ZodType<T>, raw: unknown, label: string): T {
   return parseValidated(schema, raw, `七天学堂${label}结构不符合预期`);
@@ -294,6 +313,28 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       body: new URLSearchParams(params).toString(), signal: options?.signal,
     });
     return openData(body.data);
+  }
+
+  /**
+   * 小程序接口面：token 与版本号放进请求参数，不发送 `Token` 头（与官方小程序同形；实测服务端不校验）。
+   * 响应仍可能使用平台静态密钥加密，沿用 `openData` 解密；错误语义与 App 接口面一致。
+   */
+  async function publicPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+    const publicHeaders: Record<string, string> = { Version: version, 'User-Agent': userAgent, 'Accept-Charset': 'UTF-8' };
+    const cookie = session.providerContext?.['wafCookie'];
+    if (cookie) publicHeaders['Cookie'] = cookie;
+    const body = await request(publicHost + route, {
+      method: 'POST',
+      headers: { ...publicHeaders, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8;' },
+      body: new URLSearchParams({ ...params, token: session.accessToken, version }).toString(), signal: options?.signal,
+    });
+    return openData(body.data);
+  }
+
+  /** 按科目定位考试成绩缓存里的科目行；缺考与不存在返回 undefined。 */
+  function locateSubject(result: ExamResult, subjectId: string) {
+    const subject = result.subjects.find((item) => item.id === subjectId || item.subject === subjectId);
+    return subject && subject.status !== 'absent' ? subject : undefined;
   }
 
   /** 附加报告缺失不阻断基础成绩；失效会话和取消操作仍交给统一错误路径。 */
@@ -516,6 +557,8 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               if (subject?.responseGuid) context.responseGuid = subject.responseGuid;
               if (subject?.srcKm) context.srcKm = subject.srcKm;
               if (exam.ruleHash) context.ruleHash = exam.ruleHash;
+              // 考试级发布类型：小程序接口面的作文接口要求携带，与 ruleHash 同样按考试级字段处理。
+              if (subjects.exam_info?.examPublishType !== undefined) context.examPublishType = String(subjects.exam_info.examPublishType);
               if (row.rating?.trim()) context.rating = row.rating.trim();
               if ((subject?.ai_essay_report && Object.keys(subject.ai_essay_report).length) || /语文|英语/.test(row.km)) context.hasEssayInfo = 'true';
               for (const field of ['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount'] as const) {
@@ -585,6 +628,94 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       const providerContext = Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== 'essayAvg' && key !== 'essayMax'));
       return { subjectId, subject: subject.subject, score: subject.score, maxScore: subject.maxScore, grade: subject.grade,
         providerContext, reportSections };
+    },
+    // 小程序接口面（szone-public）的原卷：按科目返回原卷扫描图，地址为短期签名直链，界面过期后重取。
+    async getPaperImages(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]> {
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      if (!subject) throw new ProviderError('NOT_FOUND', '该科目不可用或已标记缺考');
+      const target = context(session);
+      const ctx = subject.providerContext ?? {};
+      const data = parse(paperSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/Paper', {
+        examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
+        km: subject.subject, srcKm: ctx.srcKm ?? subject.subject,
+      }, options), '试卷原卷');
+      // 原卷是空白试卷扫描件，不含个人作答与得分标注。
+      return data.flatMap((paper) => paper.imgUrls ?? [])
+        .map((url) => ({ subject: subject.subject, subjectId, url, watermarked: false }));
+    },
+    /**
+     * 小程序接口面的作文数据：题干全文 + 本人作答切图（作答图与答题卡同源，标记为含水印）。
+     * 统计卡片沿用 `Question/ThScoreInfo` 的既有实现，这里只补题干与图片；缺参数时安静降级。
+     */
+    async getEssayDetail(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<EssayDetail> {
+      const empty: EssayDetail = { answerSheets: [] };
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      if (!subject) return empty;
+      const ctx = subject.providerContext ?? {};
+      if (ctx.hasEssayInfo !== 'true') return empty;
+      const target = context(session);
+      const srcKm = ctx.srcKm ?? subject.subject;
+      const base = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade,
+        schoolRuCode: target.ruCode, km: subject.subject, srcKm,
+        subject: subject.subject, srcSubject: srcKm, examPublishType: ctx.examPublishType ?? '' };
+      const [report, stem] = await Promise.all([
+        ctx.responseGuid && ctx.examPublishType !== undefined
+          ? optionalReport(async () => parse(essayReportSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/AIEssayReport',
+            { ...base, responseGuid: ctx.responseGuid, asiResponse: ctx.responseGuid }, options), '作文作答'), '作文作答', options)
+          : Promise.resolve({ data: undefined, notice: undefined }),
+        // 实测：题干接口同样要求 responseGuid（缺它返回 400）。
+        ctx.essay_th && ctx.responseGuid
+          ? optionalReport(async () => parse(essayStemSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/EssayQuestionStem',
+            { ...base, th: ctx.essay_th!, type: '1', responseGuid: ctx.responseGuid }, options), '作文题干'), '作文题干', options)
+          : Promise.resolve({ data: undefined, notice: undefined }),
+      ]);
+      const prompt = stem.data?.questionStemTxt?.trim();
+      // 作答切图缺失时退回平台下发的 PDF 分页图，两者都来自同一份作答扫描。
+      const images = report.data?.myAnswers?.length ? report.data.myAnswers : (report.data?.pdfImgs ?? []);
+      return {
+        ...(prompt ? { prompt } : {}),
+        answerSheets: images.map((url) => ({ subject: subject.subject, subjectId, url, watermarked: true })),
+      };
+    },
+    /**
+     * 调试用途：把平台未与官方 UI 对照语义的原始字段交给调试模式展示（如 v1 `SubjectGrade` 的 `report.total`）。
+     * 任一环节不可用即返回空数组；不把 studentCode 等中间凭据透出给界面。
+     */
+    async getDebugSubjectFields(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions) {
+      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const subject = locateSubject(result, subjectId);
+      if (!subject) return [];
+      const target = context(session);
+      try {
+        const exam = await findExam(session, examId, options);
+        const redirect = parse(studentCodeSchema, await publicPost(session, 'publicszoneui.service/AIErrorBookService/Redirect', {
+          ruCode: target.ruCode, examGuid: examId, studentCode: '', schoolGuid: target.schoolGuid,
+          examSchoolGuid: target.schoolGuid, grade: target.grade, from: '1',
+        }, options), '调试字段');
+        if (!redirect.studentCode) return [];
+        const grade = parse(subjectGradeDebugSchema, await publicPost(session, 'publicszoneui.service/QuestionService/SubjectGrade', {
+          examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
+          ruCode: target.ruCode, examType: exam.type ?? '', examSchoolGuid: target.schoolGuid,
+          studentCode: redirect.studentCode, subject: subject.subject, subjectCount: String(result.subjects.length),
+        }, options), '调试字段');
+        const rows: { label: string; value: string }[] = [];
+        const report = grade.report;
+        if (!report) return [];
+        // 语义未确认的字段原样展示，供调试模式观察；不作为参考人数等正式数据使用。
+        if (report.total !== undefined) rows.push({ label: 'report.total（语义未确认）', value: String(report.total) });
+        for (const [label, value] of [['report.myScore', report.myScore], ['report.fullScore', report.fullScore],
+          ['report.classAvg', report.classAvg], ['report.schoolAvg', report.schoolAvg]] as const) {
+          if (value?.trim()) rows.push({ label, value: value.trim() });
+        }
+        if (report.devScore !== undefined) rows.push({ label: 'report.devScore', value: String(report.devScore) });
+        return rows;
+      } catch (error) {
+        throwIfAborted(options?.signal);
+        if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;
+        return [];
+      }
     },
     async getAnswerSheets(session, examId, subjectId, _cachedResult, options?: ProviderRequestOptions) {
       return answerCardSheets(session, examId, subjectId, false, options);

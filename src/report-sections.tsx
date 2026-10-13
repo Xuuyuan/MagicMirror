@@ -5,17 +5,12 @@ import type { ReportSection } from './domain/models';
 import { Card } from './ui';
 import { DistributionGroups } from './distribution-groups';
 
-function Section({ section }: { section: ReportSection }) {
-  const [expanded, setExpanded] = useState(false);
+/** 单个报告卡片的内容区（不含标题与折叠开关）；供 `placement` 指定的功能卡片复用。 */
+export function ReportSectionBody({ section, expanded = false }: { section: ReportSection; expanded?: boolean }) {
   const theme = useTheme();
   const colors = [theme.colors.primary, theme.colors.secondary, theme.colors.tertiary, theme.colors.outline];
   const metric = section.comparisonMetric ?? '得分率';
-  const hasDetails = !!section.items?.length || !!section.comparisons?.length || !!section.notes?.some(note => section.collapseNotes || note.length > 120);
-  return <Card>
-    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-      <Text variant="titleMedium" style={{ flex: 1 }}>{section.title}</Text>
-      {hasDetails && <IconButton style={{ marginVertical: 0 }} icon={expanded ? 'chevron-up' : 'chevron-down'} onPress={() => setExpanded(v => !v)} accessibilityLabel={`${expanded ? '收起' : '展开'}${section.title}`} />}
-    </View>
+  return <>
     {(expanded || !section.collapseNotes) && section.notes?.map((note, i) => <Text key={i} variant="bodyMedium" numberOfLines={!expanded && note.length > 120 ? 3 : undefined}>{note}</Text>)}
     {section.distributions?.length ? <DistributionGroups groups={section.distributions} /> : null}
     {!!section.highlights?.length && <View style={section.highlightColumns === 3 ? { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 } : { gap: 12 }}>
@@ -41,6 +36,18 @@ function Section({ section }: { section: ReportSection }) {
         <Text variant="bodySmall" style={{ width: 56, textAlign: 'right' }}>{series.percent}%</Text>
       </View>)}
     </View>)}
+  </>;
+}
+
+function Section({ section }: { section: ReportSection }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetails = !!section.items?.length || !!section.comparisons?.length || !!section.notes?.some(note => section.collapseNotes || note.length > 120);
+  return <Card>
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      <Text variant="titleMedium" style={{ flex: 1 }}>{section.title}</Text>
+      {hasDetails && <IconButton style={{ marginVertical: 0 }} icon={expanded ? 'chevron-up' : 'chevron-down'} onPress={() => setExpanded(v => !v)} accessibilityLabel={`${expanded ? '收起' : '展开'}${section.title}`} />}
+    </View>
+    <ReportSectionBody section={section} expanded={expanded} />
   </Card>;
 }
 

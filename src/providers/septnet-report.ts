@@ -20,7 +20,7 @@ export function essaySection(essay: EssayInfo): ReportSection | undefined {
   const score = numericScore(essay.score), max = numericScore(essay.max), diff = numericScore(essay.diff);
   // 只有返回值与最高分减个人分一致时，才将 diff 解释为这个差距。
   if (score !== undefined && max !== undefined && diff !== undefined && diff >= 0 && Math.abs(max - score - diff) < 1e-6) values['距最高分'] = String(diff);
-  return { id: 'septnet-essay', title: '作文统计', highlightColumns: 3,
+  return { id: 'septnet-essay', title: '作文统计', placement: 'essay', highlightColumns: 3,
     highlights: Object.entries(values).map(([label, value]) => ({ label, value, unit: label === '更高分人数' ? '人' : '分' })),
   };
 }

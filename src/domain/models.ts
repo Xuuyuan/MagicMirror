@@ -10,10 +10,12 @@ export interface Ranking { rank: number; total?: number; /** 区间排名的上�
 export interface DefeatRate { scope: 'class' | 'grade'; value: number; }
 export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
 export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; }
+/** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
+export interface EssayDetail { prompt?: string; answerSheets: AnswerSheet[]; }
 export interface SubjectStatistic { scope: string; averageScore?: number; participantCount?: number; rank?: number; }
 export interface SubjectAnalysisItem { label: string; values: Record<string, string>; scoreBreakdown?: { score?: number; maxScore?: number; grade?: string; benchmarks: { label: string; score: number }[] }; }
 /** Provider 已解释字段含义；UI 只负责展示，不识别平台字段。 */
-export interface ReportSection { id: string; title: string; items?: SubjectAnalysisItem[]; distributions?: DistributionGroup[]; notes?: string[]; /** 说明随明细一起展开收起。 */ collapseNotes?: boolean; highlightColumns?: 3; highlights?: { label: string; value: string; unit?: string }[]; comparisonMetric?: '得分率' | '超过比例'; comparisons?: { label: string; series: { label: string; percent: number }[] }[]; }
+export interface ReportSection { id: string; title: string; /** 分区归属：界面把同一分区的报告卡片并入该功能卡片展示（当前仅 `essay`）；缺省时作为独立报告卡片。 */ placement?: 'essay'; items?: SubjectAnalysisItem[]; distributions?: DistributionGroup[]; notes?: string[]; /** 说明随明细一起展开收起。 */ collapseNotes?: boolean; highlightColumns?: 3; highlights?: { label: string; value: string; unit?: string }[]; comparisonMetric?: '得分率' | '超过比例'; comparisons?: { label: string; series: { label: string; percent: number }[] }[]; }
 /** percent 使用 0–100 刻度；无法解释的原值只显示 value，不绘制条形。 */
 export interface DistributionGroup { id: string; title: string; layout: 'options' | 'bars'; questions: { label: string; bins: { label: string; value: string; percent?: number }[] }[]; }
 export interface QuestionScore { id: string; label: string; score?: number; maxScore?: number; children?: QuestionScore[]; providerContext?: Record<string, string>; /** 题目类型：objective=客观题（带作答与正确答案），subjective=主观题。平台未区分时缺省。 */ kind?: 'objective' | 'subjective'; /** 我的作答（客观题）。 */ myAnswer?: string; /** 正确答案（客观题）。 */ answer?: string; }
