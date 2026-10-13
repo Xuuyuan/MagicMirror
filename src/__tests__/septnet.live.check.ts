@@ -80,9 +80,9 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
         console.log('[live] 作文数据', JSON.stringify({ hasPrompt: !!essay.prompt, promptLength: essay.prompt?.length ?? 0, answerSheets: essay.answerSheets.length }));
         for (const sheet of essay.answerSheets) expect(sheet.url.startsWith('https://')).toBe(true);
       }
-      if (provider.getDebugSubjectFields) {
-        const fields = await provider.getDebugSubjectFields(session, result.examId, target.subject, result);
-        console.log('[live] 调试字段', JSON.stringify(fields));
+      if (provider.getSubjectStatistics) {
+        const statistics = await provider.getSubjectStatistics(session, result.examId, target.subject, result);
+        console.log('[live] 科目统计', JSON.stringify(statistics));
       }
     }
   });

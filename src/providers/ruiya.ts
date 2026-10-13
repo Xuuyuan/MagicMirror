@@ -339,9 +339,7 @@ export function createRuiyaProvider(transport: FetchTransport = (...args) => fet
           subjects = subjects.map((subject, index) => {
             const max = papers[index]?.max;
             if (max === undefined) return subject;
-            return subject.providerContext?.scaledScore !== undefined
-              ? { ...subject, maxScore: max, providerContext: { ...subject.providerContext, originalMaxScore: String(max) } }
-              : { ...subject, maxScore: max };
+            return { ...subject, maxScore: max };
           });
           const originalScores = subjects.map(subject => reportNumber(subject.providerContext?.originalScore) ?? subject.score);
           const originalTotal = parsed.originalTotalScore ?? parsed.totalScore;

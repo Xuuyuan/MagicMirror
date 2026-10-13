@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ecb, gcm } from '@noble/ciphers/aes.js';
 import { getRandomBytes } from 'expo-crypto';
-import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type UnclaimedExam } from '../domain/models';
+import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type SubjectStatistic, type UnclaimedExam } from '../domain/models';
 import { distributionSection, essaySection } from './septnet-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
@@ -135,12 +135,9 @@ const essayReportSchema = z.object({
   myAnswers: z.array(z.string().min(1)).optional(), pdfImgs: z.array(z.string().min(1)).optional(),
 });
 const essayStemSchema = z.object({ questionStemTxt: z.string().optional(), uploadImg: z.string().optional() });
-// 旧版接口原始字段：未与官方 UI 对照语义，仅在调试模式下展示，不能作为正式数据使用。
-const subjectGradeDebugSchema = z.object({
-  report: z.object({
-    total: z.number().finite().optional(), myScore: z.string().optional(), fullScore: fullScoreSchema,
-    classAvg: z.string().optional(), schoolAvg: z.string().optional(), devScore: z.number().finite().optional(),
-  }).optional(),
+// 旧版接口的科目统计：`report.total` 经项目负责人确认为「校内参加本科目考试的考生人数」（是本科目，不是本场考试）。
+const subjectGradeSchema = z.object({
+  report: z.object({ total: z.number().finite().optional() }).optional(),
 });
 const studentCodeSchema = z.object({ studentCode: z.string().optional() });
 
@@ -154,14 +151,24 @@ function assignedScore(row: z.infer<typeof reportRowSchema> | undefined): number
   return score !== undefined && score >= 0 ? score : undefined;
 }
 
-// 按项目负责人提供的等第区间展示，不推算个人精确名次。
-const gradePercentiles: Readonly<Record<string, string>> = {
-  A1: '前1%', A2: '1-3%', A3: '3-6%', A4: '6-10%', A5: '10-15%',
-  B1: '15-21%', B2: '21-28%', B3: '28-36%', B4: '36-43%', B5: '43-50%',
-  C1: '50-56%', C2: '56-64%', C3: '64-71%', C4: '71-78%', C5: '78-84%',
-  D1: '84-89%', D2: '89-93%', D3: '93-96%', D4: '96-98%', D5: '98-99%',
-  E: '99-100%',
+// 按项目负责人提供的等第区间（从高到低的比例带，单位 %），展示串由此派生，不推算个人精确名次。
+const gradeBands: Readonly<Record<string, { min: number; max: number }>> = {
+  A1: { min: 0, max: 1 }, A2: { min: 1, max: 3 }, A3: { min: 3, max: 6 }, A4: { min: 6, max: 10 }, A5: { min: 10, max: 15 },
+  B1: { min: 15, max: 21 }, B2: { min: 21, max: 28 }, B3: { min: 28, max: 36 }, B4: { min: 36, max: 43 }, B5: { min: 43, max: 50 },
+  C1: { min: 50, max: 56 }, C2: { min: 56, max: 64 }, C3: { min: 64, max: 71 }, C4: { min: 71, max: 78 }, C5: { min: 78, max: 84 },
+  D1: { min: 84, max: 89 }, D2: { min: 89, max: 93 }, D3: { min: 93, max: 96 }, D4: { min: 96, max: 98 }, D5: { min: 98, max: 99 },
+  E: { min: 99, max: 100 },
 };
+
+function gradeBand(grade: string | undefined): { min: number; max: number } | undefined {
+  const code = (grade ?? '').trim().toUpperCase();
+  return Object.hasOwn(gradeBands, code) ? gradeBands[code] : undefined;
+}
+
+function gradePercentileText(grade: string | undefined): string | undefined {
+  const band = gradeBand(grade);
+  return band ? band.min === 0 ? `前${band.max}%` : `${band.min}-${band.max}%` : undefined;
+}
 
 function businessError(status: number | string): ProviderError {
   const code = Number(status);
@@ -541,7 +548,7 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         examId, examName: exam.examName,
         isUnion: subjects.exam_info?.isUnion,
         grade: totalGrade && totalGrade !== '-' ? totalGrade : undefined,
-        gradePercentile: Object.hasOwn(gradePercentiles, totalGrade) ? gradePercentiles[totalGrade] : undefined,
+        gradePercentile: gradePercentileText(totalGrade),
         subjects: [...merged.values()]
           .filter((row) => row.km !== '总分' && row.kmTag !== -2)
           .map((row) => {
@@ -559,6 +566,8 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               if (exam.ruleHash) context.ruleHash = exam.ruleHash;
               // 考试级发布类型：小程序接口面的作文接口要求携带，与 ruleHash 同样按考试级字段处理。
               if (subjects.exam_info?.examPublishType !== undefined) context.examPublishType = String(subjects.exam_info.examPublishType);
+              // 考试性质标签：旧版科目统计接口需要 examType。
+              if (exam.type) context.examType = exam.type;
               if (row.rating?.trim()) context.rating = row.rating.trim();
               if ((subject?.ai_essay_report && Object.keys(subject.ai_essay_report).length) || /语文|英语/.test(row.km)) context.hasEssayInfo = 'true';
               for (const field of ['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount'] as const) {
@@ -566,15 +575,13 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               }
             }
             const gradeCode = (row.grade ?? '').trim().toUpperCase();
-            const gradePercentile = absent ? undefined : Object.hasOwn(gradePercentiles, gradeCode) ? gradePercentiles[gradeCode] : undefined;
+            const gradePercentile = absent ? undefined : gradePercentileText(gradeCode);
             if (gradePercentile !== undefined) context.gradePercentile = gradePercentile;
             if (essayAvg !== undefined) context.essayAvg = String(essayAvg);
             if (essayMax !== undefined) context.essayMax = String(essayMax);
             if (scaledScore !== undefined) {
               context.scaledScore = String(scaledScore);
               if (rawScore !== undefined) context.originalScore = String(rawScore);
-              const originalMax = numericScore(row.fullScore);
-              if (originalMax !== undefined) context.originalMaxScore = String(originalMax);
             }
             return {
               subject: row.km, score: scaledScore ?? rawScore,
@@ -603,9 +610,6 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         schoolRuCode: target.ruCode, km: subject.subject, srcKm: ctx.srcKm ?? subject.subject };
       const reportSections: ReportSection[] = [];
       const notices: string[] = [];
-      const notes: string[] = [];
-      if (ctx.originalMaxScore) notes.push(`原始分满分 ${ctx.originalMaxScore}`);
-      if (notes.length) reportSections.push({ id: 'septnet-subject-info', title: '科目信息', notes });
       const embeddedEssay = Object.fromEntries(['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount']
         .flatMap((field) => ctx[`essay_${field}`] !== undefined ? [[field, ctx[`essay_${field}`]]] : []));
       const [essay, distribution] = await Promise.all([
@@ -683,34 +687,39 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
      * 调试用途：把平台未与官方 UI 对照语义的原始字段交给调试模式展示（如 v1 `SubjectGrade` 的 `report.total`）。
      * 任一环节不可用即返回空数组；不把 studentCode 等中间凭据透出给界面。
      */
-    async getDebugSubjectFields(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions) {
+    /**
+     * 科目级统计：校内参加本科目考试的考生人数（平台旧版接口的 `report.total`，已由项目负责人确认语义）。
+     * 取数需要先换考号，且只对本人有权查看的科目有效；任一环节不可用即返回空数组，不阻断科目详情。
+     */
+    async getSubjectStatistics(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<SubjectStatistic[]> {
       const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
       const subject = locateSubject(result, subjectId);
-      if (!subject) return [];
       const target = context(session);
+      const ctx = subject?.providerContext ?? {};
+      if (!subject || !ctx.examType || !target.ruCode) return [];
+      const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
+        ruCode: target.ruCode, examType: ctx.examType, examSchoolGuid: target.schoolGuid,
+        subject: subject.subject, subjectCount: String(result.subjects.length) };
       try {
-        const exam = await findExam(session, examId, options);
         const redirect = parse(studentCodeSchema, await publicPost(session, 'publicszoneui.service/AIErrorBookService/Redirect', {
           ruCode: target.ruCode, examGuid: examId, studentCode: '', schoolGuid: target.schoolGuid,
           examSchoolGuid: target.schoolGuid, grade: target.grade, from: '1',
-        }, options), '调试字段');
+        }, options), '科目统计');
         if (!redirect.studentCode) return [];
-        const grade = parse(subjectGradeDebugSchema, await publicPost(session, 'publicszoneui.service/QuestionService/SubjectGrade', {
-          examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
-          ruCode: target.ruCode, examType: exam.type ?? '', examSchoolGuid: target.schoolGuid,
-          studentCode: redirect.studentCode, subject: subject.subject, subjectCount: String(result.subjects.length),
-        }, options), '调试字段');
-        const rows: { label: string; value: string }[] = [];
-        const report = grade.report;
-        if (!report) return [];
-        // 语义未确认的字段原样展示，供调试模式观察；不作为参考人数等正式数据使用。
-        if (report.total !== undefined) rows.push({ label: 'report.total（语义未确认）', value: String(report.total) });
-        for (const [label, value] of [['report.myScore', report.myScore], ['report.fullScore', report.fullScore],
-          ['report.classAvg', report.classAvg], ['report.schoolAvg', report.schoolAvg]] as const) {
-          if (value?.trim()) rows.push({ label, value: value.trim() });
+        const grade = parse(subjectGradeSchema, await publicPost(session, 'publicszoneui.service/QuestionService/SubjectGrade',
+          { ...params, studentCode: redirect.studentCode }, options), '科目统计');
+        const total = grade.report?.total;
+        // 0 或负数不是有效人数，视为未提供。
+        if (total === undefined || total <= 0) return [];
+        const statistics: SubjectStatistic[] = [{ scope: '学校参考', participantCount: total }];
+        // 预估排名 = 参考人数 × 等第比例带（从高到低），上下界向上取整；未知等第不推算。
+        const band = gradeBand(subject.grade);
+        if (band) {
+          const lower = Math.max(1, Math.ceil(total * band.min / 100));
+          const upper = Math.min(total, Math.ceil(total * band.max / 100));
+          statistics.push({ scope: '学校', rank: lower, rankMax: Math.max(lower, upper), estimate: true });
         }
-        if (report.devScore !== undefined) rows.push({ label: 'report.devScore', value: String(report.devScore) });
-        return rows;
+        return statistics;
       } catch (error) {
         throwIfAborted(options?.signal);
         if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;

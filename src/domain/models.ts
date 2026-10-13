@@ -12,7 +12,7 @@ export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile
 export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; }
 /** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
 export interface EssayDetail { prompt?: string; answerSheets: AnswerSheet[]; }
-export interface SubjectStatistic { scope: string; averageScore?: number; participantCount?: number; rank?: number; }
+export interface SubjectStatistic { scope: string; averageScore?: number; participantCount?: number; rank?: number; /** 区间排名上界：与 rank 组成名次范围（如 164~211）。 */ rankMax?: number; /** 估算值：界面在标签上加「（预估）」，表示不是平台下发的精确名次。 */ estimate?: boolean; }
 export interface SubjectAnalysisItem { label: string; values: Record<string, string>; scoreBreakdown?: { score?: number; maxScore?: number; grade?: string; benchmarks: { label: string; score: number }[] }; }
 /** Provider 已解释字段含义；UI 只负责展示，不识别平台字段。 */
 export interface ReportSection { id: string; title: string; /** 分区归属：界面把同一分区的报告卡片并入该功能卡片展示（当前仅 `essay`）；缺省时作为独立报告卡片。 */ placement?: 'essay'; items?: SubjectAnalysisItem[]; distributions?: DistributionGroup[]; notes?: string[]; /** 说明随明细一起展开收起。 */ collapseNotes?: boolean; highlightColumns?: 3; highlights?: { label: string; value: string; unit?: string }[]; comparisonMetric?: '得分率' | '超过比例'; comparisons?: { label: string; series: { label: string; percent: number }[] }[]; }

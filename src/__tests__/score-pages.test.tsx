@@ -4,7 +4,7 @@ import Result from '../../app/result';
 import { ExamMeta } from '../../app/index';
 import Subject from '../../app/subject';
 import { QuestionImagePreview } from '../question-image-preview';
-import type { ExamResult, SubjectDetail } from '../domain/models';
+import type { ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
 import { useAppStore } from '../state/app';
 import { providerRegistry } from '../providers/registry';
@@ -27,21 +27,21 @@ jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');
-  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; debugMode: boolean;
+  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode;
     setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void;
-  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both', debugMode: false,
+  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both',
     setShowAbsentSubjects: showAbsentSubjects => set({ showAbsentSubjects }),
     setSeptnetGradeDisplay: septnetGradeDisplay => set({ septnetGradeDisplay }),
   })) };
 });
 let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
-let mockDebugFields: { label: string; value: string }[] = [];
+let mockStatistics: SubjectStatistic[] = [];
 jest.mock('../services/queries', () => ({
   examResultQueryOptions: () => ({ data: mockResult }),
   subjectQueryOptions: () => ({ data: mockSubject }),
   watermarkedAnswerSheetsQueryOptions: () => ({ data: [] }),
   essayQueryOptions: () => ({ data: mockEssay }),
-  debugSubjectFieldsQueryOptions: () => ({ data: mockDebugFields }),
+  subjectStatisticsQueryOptions: () => ({ data: mockStatistics }),
 }));
 jest.mock('@tanstack/react-query', () => ({ useQuery: (options: object) => ({ ...options, isPending: false }), useQueryClient: () => ({}) }));
 jest.mock('react-native', () => ({
@@ -80,9 +80,9 @@ let root: Root;
 beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
-  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', debugMode: false });
+  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both' });
   mockEssay = { answerSheets: [] };
-  mockDebugFields = [];
+  mockStatistics = [];
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
@@ -387,7 +387,7 @@ it('综合分析默认折叠，展开显示数值与对比，收起后保留说�
   } finally { delete mockResult.reportSections; }
 });
 
-it('作文与调试字段按数据与调试模式出现，原卷入口按能力显示', async () => {
+it('作文卡片按数据出现，原卷入口与科目统计按能力显示', async () => {
   const get = providerRegistry.get as unknown as jest.Mock;
   await act(async () => root.render(<Subject />));
   expect(container.textContent).not.toContain('查看原卷');
@@ -395,7 +395,7 @@ it('作文与调试字段按数据与调试模式出现，原卷入口按能力�
 
   get.mockReturnValue({ getEssayDetail: () => undefined, getDebugSubjectFields: () => undefined, getPaperImages: () => undefined });
   mockEssay = { prompt: '虚构作文题干', answerSheets: [{ subject: '化学', url: 'https://example.com/essay.jpg', watermarked: true }] };
-  mockDebugFields = [{ label: 'report.total（语义未确认）', value: '584' }];
+  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
   await act(async () => root.render(<Subject />));
   expect(container.textContent).toContain('查看原卷');
   expect(container.textContent).not.toContain('虚构作文题干');
@@ -407,11 +407,18 @@ it('作文与调试字段按数据与调试模式出现，原卷入口按能力�
   await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '查看本人作答')!.click());
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
   expect(container.textContent).not.toContain('虚构作文题干');
-  expect(container.textContent).not.toContain('report.total');
+});
 
-  useAppStore.setState({ debugMode: true });
+it('科目统计：人数与相邻排名同字号，不重复显示单位', async () => {
   await act(async () => root.render(<Subject />));
-  expect(container.textContent).toContain('report.total（语义未确认）584');
+  expect(container.textContent).not.toContain('学校参考');
+  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
+  await act(async () => root.render(<Subject />));
+  expect(container.textContent).toContain('学校参考人数584');
+  expect(container.textContent).toContain('学校排名（预估）164~211');
+  // 与「科目各范围排名以大字号显示名次，小字号显示总人数」用的是同一套排版约定。
+  const big = Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(node => node.textContent);
+  expect(big).toEqual(expect.arrayContaining(['584', '164~211']));
 });
 
 it('作文统计随科目详情到达即并入作文卡片，不依赖作文懒加载', async () => {

@@ -1,5 +1,5 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
-import type { AnswerSheet, AuthSession, EssayDetail, ExamResult, StudentProfile, SubjectDetail } from '@/src/domain/models';
+import type { AnswerSheet, AuthSession, EssayDetail, ExamResult, StudentProfile, SubjectDetail, SubjectStatistic } from '@/src/domain/models';
 import type { ProviderRequestOptions, ScoreProvider } from '@/src/providers/types';
 import { withAccount } from './accounts';
 import { throwIfAborted } from './http';
@@ -13,7 +13,7 @@ export const accountQueryKeys = {
   watermarkedSheets: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'watermarked-sheets', examId, subjectId] as const,
   papers: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'papers', examId, subjectId] as const,
   essay: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'essay', examId, subjectId] as const,
-  debugFields: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'debug-fields', examId, subjectId] as const,
+  subjectStatistics: (accountId: string, revision: string | undefined, examId: string, subjectId: string) => ['account', accountId, revision, 'subject-statistics', examId, subjectId] as const,
   unclaimedExams: (accountId?: string, revision?: string) => ['account', accountId, revision, 'unclaimed-exams'] as const,
 };
 
@@ -120,11 +120,11 @@ export function essayQueryOptions(queryClient: QueryClient, accountId: string, r
     (provider) => provider.getEssayDetail, subjectId, { answerSheets: [] });
 }
 
-/** 仅调试模式使用：平台未确认语义的原始字段。 */
-export function debugSubjectFieldsQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId: string, enabled: boolean) {
-  return subjectResourceQueryOptions<{ label: string; value: string }[]>(queryClient, accountId, revision, examId,
-    accountQueryKeys.debugFields(accountId, revision, examId, subjectId), enabled,
-    (provider) => provider.getDebugSubjectFields, subjectId, []);
+/** 科目级统计（如参考人数）；懒加载，与科目详情相互独立。 */
+export function subjectStatisticsQueryOptions(queryClient: QueryClient, accountId: string, revision: string | undefined, examId: string, subjectId: string, enabled: boolean) {
+  return subjectResourceQueryOptions<SubjectStatistic[]>(queryClient, accountId, revision, examId,
+    accountQueryKeys.subjectStatistics(accountId, revision, examId, subjectId), enabled,
+    (provider) => provider.getSubjectStatistics, subjectId, []);
 }
 
 /** 待认领考试列表；首页与认领页共用同一份缓存。 */
