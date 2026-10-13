@@ -162,7 +162,7 @@ describe('Septnet Provider（无网络）', () => {
     ['B1', '15-21%'], ['B2', '21-28%'], ['B3', '28-36%'], ['B4', '36-43%'], ['B5', '43-50%'],
     ['C1', '50-56%'], ['C2', '56-64%'], ['C3', '64-71%'], ['C4', '71-78%'], ['C5', '78-84%'],
     ['D1', '84-89%'], ['D2', '89-93%'], ['D3', '93-96%'], ['D4', '96-98%'], ['D5', '98-99%'],
-    ['E', '99-100%'], [' c4 ', '71-78%'], ['-', undefined], ['未知', undefined],
+    ['E', '99-100%'], ['E1', '99-100%'], ['e1', '99-100%'], [' c4 ', '71-78%'], ['-', undefined], ['E2', undefined], ['未知', undefined],
   ])('等第 %s 对应百分比 %s，未知等第不推算', async (grade, percentile) => {
     const session: AuthSession = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN_0123456789',
       providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10' } };
@@ -592,6 +592,14 @@ describe('Septnet Provider（无网络）', () => {
     expect(await lower.provider.getSubjectStatistics!(detailSession, top.examId, '语文', top)).toEqual([
       { scope: '学校参考', participantCount: 500 },
       { scope: '学校', rank: 1, rankMax: 5, estimate: true },
+    ]);
+    // E1 视同 E：500 人的 99-100% → 495~500。
+    const e1 = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },
+      { status: 200, message: 'success', data: { report: { total: 500 } } }]);
+    const last: ExamResult = { ...graded, subjects: [{ subject: '语文', score: 90, grade: 'E1', providerContext: { examType: '周测' } }] };
+    expect(await e1.provider.getSubjectStatistics!(detailSession, last.examId, '语文', last)).toEqual([
+      { scope: '学校参考', participantCount: 500 },
+      { scope: '学校', rank: 495, rankMax: 500, estimate: true },
     ]);
     // 非等第（评价词）不推算。
     const word = setup([{ status: 200, message: 'success', data: { studentCode: 'FICTIONAL-CODE' } },

@@ -160,9 +160,13 @@ const gradeBands: Readonly<Record<string, { min: number; max: number }>> = {
   E: { min: 99, max: 100 },
 };
 
+// 平台可能下发带次级的等第；按项目负责人确认，E1 视同等第 E（区间表只有 E）。
+const gradeAliases: Readonly<Record<string, string>> = { E1: 'E' };
+
 function gradeBand(grade: string | undefined): { min: number; max: number } | undefined {
   const code = (grade ?? '').trim().toUpperCase();
-  return Object.hasOwn(gradeBands, code) ? gradeBands[code] : undefined;
+  const key = gradeAliases[code] ?? code;
+  return Object.hasOwn(gradeBands, key) ? gradeBands[key] : undefined;
 }
 
 function gradePercentileText(grade: string | undefined): string | undefined {
