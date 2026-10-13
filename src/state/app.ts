@@ -5,7 +5,7 @@ import { setDiagnosticDebugMode } from '@/src/services/diagnostics';
 import { isGradeDisplayMode, type GradeDisplayMode } from '@/src/services/score-display';
 
 type Theme = 'system' | 'light' | 'dark';
-interface AppState { theme: Theme; seedColor: string; debugMode: boolean; showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void; setTheme: (theme: Theme) => void; setSeedColor: (seedColor: string) => void; enableDebugMode: () => void; }
+interface AppState { theme: Theme; seedColor: string; debugMode: boolean; showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; dismissedNotices: string[]; setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void; setTheme: (theme: Theme) => void; setSeedColor: (seedColor: string) => void; enableDebugMode: () => void; dismissNotice: (id: string) => void; }
 
 export const useAppStore = create<AppState>((set) => ({
   theme: 'system',
@@ -13,11 +13,13 @@ export const useAppStore = create<AppState>((set) => ({
   debugMode: false,
   showAbsentSubjects: true,
   septnetGradeDisplay: 'both',
+  dismissedNotices: [],
   setShowAbsentSubjects: (showAbsentSubjects) => set({ showAbsentSubjects }),
   setSeptnetGradeDisplay: (septnetGradeDisplay) => set({ septnetGradeDisplay }),
   setTheme: (theme) => set({ theme }),
   setSeedColor: (seedColor) => set({ seedColor }),
   enableDebugMode: () => { setDiagnosticDebugMode(true); set({ debugMode: true }); },
+  dismissNotice: (id) => set((state) => state.dismissedNotices.includes(id) ? state : { dismissedNotices: [...state.dismissedNotices, id] }),
 }));
 
 // 偏好非敏感但体积极小，直接用现成的 SecureStore（避免为 AsyncStorage 新增依赖）。
@@ -40,6 +42,7 @@ export async function hydratePreferences(): Promise<void> {
       ...(typeof record.seedColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(record.seedColor) ? { seedColor: record.seedColor } : {}),
       ...(typeof record.showAbsentSubjects === 'boolean' ? { showAbsentSubjects: record.showAbsentSubjects } : {}),
       ...(isGradeDisplayMode(record.septnetGradeDisplay) ? { septnetGradeDisplay: record.septnetGradeDisplay } : {}),
+      ...(Array.isArray(record.dismissedNotices) ? { dismissedNotices: record.dismissedNotices.filter((item): item is string => typeof item === 'string') } : {}),
     });
   } catch {
     // 偏好读取失败不影响使用，保持默认值。
@@ -48,7 +51,7 @@ export async function hydratePreferences(): Promise<void> {
 
 useAppStore.subscribe((state) => {
   void SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify({ theme: state.theme, seedColor: state.seedColor,
-    showAbsentSubjects: state.showAbsentSubjects, septnetGradeDisplay: state.septnetGradeDisplay })).catch(() => {
+    showAbsentSubjects: state.showAbsentSubjects, septnetGradeDisplay: state.septnetGradeDisplay, dismissedNotices: state.dismissedNotices })).catch(() => {
     // 偏好写入失败不阻塞使用，重启后回退默认值。
   });
 });

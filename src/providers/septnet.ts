@@ -594,6 +594,10 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         totalScore, maxTotalScore: maxTotalScore ?? 0,
         ...(scaledTotalScore !== undefined && rawTotalScore !== undefined ? { originalTotalScore: rawTotalScore } : {}),
         ...(participantCount !== undefined ? { participantCount } : {}),
+        // 联考的等第百分比是校内排名比例，容易被误读为联考范围；顶部给出可关闭说明。
+        ...(subjects.exam_info?.isUnion === true
+          ? { notice: { id: 'septnet-union-grade-scope', text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。' } }
+          : {}),
         ...(scaledTotalScore !== undefined ? { originalMaxTotalScore: numericScore(total?.fullScore ?? info?.fullScore) } : {}),
         // 平台不提供名次（只有等级位置，且非会员被拦截）：保持 undefined。
         ranking: undefined,

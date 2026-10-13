@@ -8,7 +8,9 @@ export interface ClaimCandidate { studentCode: string; url?: string; }
 export interface SubjectScore { id?: string; subject: string; score?: number; maxScore?: number; grade?: string; /** 平台明确标记缺考时设置；不能由分数缺失推断。 */ status?: 'absent'; providerContext?: Record<string, string>; }
 export interface Ranking { rank: number; total?: number; /** 区间排名的上界（如官方下发「1~20」时 rank=1、rankMax=20）；缺省表示精确名次。 */ rankMax?: number; label?: string; scope?: 'class' | 'grade' | 'group'; }
 export interface DefeatRate { scope: 'class' | 'grade'; value: number; }
-export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
+/** Provider 解释的页面级提示：显示在详情页顶部，用户可关闭，关闭状态按 id 记忆。 */
+export interface ProviderNotice { id: string; text: string; }
+export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; /** 页面级提示（如联考等第口径说明）。 */ notice?: ProviderNotice; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
 export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; }
 /** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
 export interface EssayDetail { prompt?: string; answerSheets: AnswerSheet[]; }

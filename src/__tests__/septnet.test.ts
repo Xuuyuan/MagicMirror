@@ -278,6 +278,7 @@ describe('Septnet Provider（无网络）', () => {
     const result = await provider.getExamResult(session, 'EXAM-0001-AAAA');
     expect(result.totalScore).toBe(238);
     expect(result.participantCount).toBe(512);
+    expect(result.notice).toBeUndefined();
     expect(result.subjects).toEqual([
       { subject: '语文', score: 118, maxScore: 150, grade: 'A2', providerContext: {
         essayAvg: '38.5', essayMax: '56', gradePercentile: '1-3%', responseGuid: 'GUID-1', rating: '优', hasEssayInfo: 'true', examType: '周测',
@@ -462,6 +463,8 @@ describe('Septnet Provider（无网络）', () => {
     ]);
     const result = await provider.getExamResult(detailSession, 'EXAM-0001-AAAA');
     expect(result).toMatchObject({ grade: 'A2', gradePercentile: '1-3%', publishedAt: '2026-05-27 10:27:08', isUnion: true });
+    // 联考：顶部提示等第百分比是校内排名比例（可关闭，按 id 记忆）。
+    expect(result.notice).toEqual({ id: 'septnet-union-grade-scope', text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。' });
     expect(result.reportSections).toBeUndefined();
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     expect(calls.some(([url]) => url.endsWith('/Conclusion'))).toBe(false);

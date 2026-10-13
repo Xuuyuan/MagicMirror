@@ -63,6 +63,7 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
       subjects: result.subjects.length,
       hasTotal: typeof result.totalScore === 'number',
       hasPublishedAt: typeof result.publishedAt === 'string',
+      notice: result.notice?.id ?? null,
       subjectFields: result.subjects.map((subject) => Object.keys(subject)),
     }));
 

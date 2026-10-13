@@ -27,11 +27,12 @@ jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');
-  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode;
-    setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void;
-  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both',
+  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; dismissedNotices: string[];
+    setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void; dismissNotice: (id: string) => void;
+  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [],
     setShowAbsentSubjects: showAbsentSubjects => set({ showAbsentSubjects }),
     setSeptnetGradeDisplay: septnetGradeDisplay => set({ septnetGradeDisplay }),
+    dismissNotice: id => set(state => ({ dismissedNotices: [...state.dismissedNotices, id] })),
   })) };
 });
 let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
@@ -80,7 +81,7 @@ let root: Root;
 beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
-  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both' });
+  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [] });
   mockEssay = { answerSheets: [] };
   mockStatistics = [];
   container = document.createElement('div');
@@ -435,4 +436,24 @@ it('作文统计随科目详情到达即并入作文卡片，不依赖作文懒�
     await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
     expect(container.textContent).not.toContain('个人得分');
   } finally { delete mockSubject.reportSections; }
+});
+
+it('考试详情顶部提示按单场考试记忆关闭状态', async () => {
+  await act(async () => root.render(<Result />));
+  expect(container.textContent).not.toContain('等第及对应的百分比');
+
+  const notice = { id: 'septnet-union-grade-scope', text: '等第及对应的百分比表示的是在学校内的排名比例。' };
+  mockResult.notice = notice;
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('等第及对应的百分比表示的是在学校内的排名比例。');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭提示"]')!.click());
+    expect(container.textContent).not.toContain('等第及对应的百分比');
+    // 关闭状态键为「考试 + 提示」：本场不再显示。
+    expect(useAppStore.getState().dismissedNotices).toEqual(['fictional-exam:septnet-union-grade-scope']);
+    // 换一场考试（不同 examId）时同一条提示仍会出现。
+    mockResult.examId = 'fictional-exam-2';
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('等第及对应的百分比');
+  } finally { delete mockResult.notice; mockResult.examId = 'fictional-exam'; }
 });
