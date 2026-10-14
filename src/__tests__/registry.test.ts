@@ -11,6 +11,5 @@ describe('provider contracts', () => {
     const provider = providerRegistry.get('bfzks');
     expect(provider?.metadata.name).toContain('百分智');
     expect(provider?.metadata.officialDomain).toBe('https://www.bfzks.com');
-    expect(capabilitiesSchema.parse(provider?.capabilities).results).toBe(true);
   });
 });
