@@ -11,20 +11,42 @@
  * 不做任何写操作（不调用 exam/SetView、不认领、不修改资料、不生成 AI 报告、不发短信）。
  */
 import { createSeptnetProvider } from '@/src/providers/septnet';
+import { z } from 'zod';
+import { requestWithTimeout } from '@/src/services/http';
+jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digestStringAsync: async (_algorithm: string, value: string) =>
+    jest.requireActual<{ createHash: (algorithm: string) => { update: (value: string) => { digest: (encoding: string) => string } } }>('node:crypto').createHash('sha256').update(value).digest('hex'),
+}));
 
 const account = process.env.SEPTNET_ACCOUNT ?? '';
 const password = process.env.SEPTNET_PASSWORD ?? '';
+// 默认保持原 App 链路；SEPTNET_LOGIN_METHOD=miniapp 时验证小程序 Token 的完整查询兼容性。
+const loginMethod = process.env.SEPTNET_LOGIN_METHOD ?? 'app';
 // 真实随机源（Node 环境；Provider 在 App 内默认使用 expo-crypto）。
 const random = (size: number) => globalThis.crypto.getRandomValues(new Uint8Array(size));
 
 jest.setTimeout(120000);
 
 const live = account && password ? it : it.skip;
+async function bindingState(token: string) {
+  const response = await requestWithTimeout(fetch, 'https://szone-public.7net.cc/publicszoneui.service/UserService/info', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token, version: '4.6.4' }).toString(),
+  });
+  const parsed = z.object({ status: z.union([z.string(), z.number()]),
+    data: z.object({ isWXBind: z.union([z.string(), z.number(), z.boolean()]) }) }).safeParse(await response.json());
+  if (!parsed.success || Number(parsed.data.status) !== 200) throw new Error('无法读取微信绑定状态，响应未输出');
+  return parsed.data.data.isWXBind;
+}
 
 describe('七天学堂 Provider 联网冒烟（只读）', () => {
   live('登录 → 学生信息 → 考试列表 → 一场成绩', async () => {
     const provider = createSeptnetProvider({ random });
-    const session = await provider.authenticate(account, password);
+    const baseline = loginMethod === 'miniapp' ? await provider.authenticate(account, password) : undefined;
+    const bindingBefore = baseline ? await bindingState(baseline.accessToken) : undefined;
+    const baselineProfile = baseline ? await provider.getProfile(baseline) : undefined;
+    const session = await provider.authenticateWithMethod!(account, password, loginMethod);
     console.log('[live] 登录与上下文完成');
     expect(session.providerId).toBe('septnet');
     expect(session.providerContext?.['schoolGuid']).toBeTruthy();
@@ -34,9 +56,20 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
     console.log('[live] 学生信息完成');
     expect(profile.id.length).toBeGreaterThan(0);
     expect(profile.displayName.length).toBeGreaterThan(0);
+    if (baselineProfile) {
+      expect(profile.id === baselineProfile.id).toBe(true);
+      const unchanged = bindingBefore === await bindingState(session.accessToken);
+      console.log('[live] 小程序登录前后微信绑定标志一致', unchanged);
+      expect(unchanged).toBe(true);
+      const oldSessionProfile = await provider.getProfile(baseline!);
+      expect(oldSessionProfile.id === profile.id).toBe(true);
+      console.log('[live] 原 App 会话仍可查询同一学生');
+    }
 
     const list = await provider.getExamList(session);
     console.log('[live] 考试列表完成');
+    const unclaimed = await provider.getUnclaimedExams!(session);
+    console.log('[live] 待认领考试项数', unclaimed.length);
     expect(Array.isArray(list)).toBe(true);
     expect(list.length).toBeGreaterThan(0);
     for (const exam of list) {
@@ -71,6 +104,18 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
     const scorable = result.subjects.filter((subject) => subject.score !== undefined);
     const target = scorable.find((subject) => subject.subject === '语文') ?? scorable[0];
     if (target) {
+      const detail = await provider.getSubjectDetail!(session, result.examId, target.subject, result);
+      console.log('[live] 科目详情已返回', !!detail);
+      if (provider.getAnswerSheets) {
+        const sheets = await provider.getAnswerSheets(session, result.examId, target.subject, result);
+        console.log('[live] 答题卡页数', sheets.length);
+        for (const sheet of sheets) expect(sheet.url.startsWith('https://')).toBe(true);
+      }
+      if (provider.getWatermarkedAnswerSheets) {
+        const sheets = await provider.getWatermarkedAnswerSheets(session, result.examId, target.subject, result);
+        console.log('[live] 标注答题卡页数', sheets.length);
+        for (const sheet of sheets) expect(sheet.url.startsWith('https://')).toBe(true);
+      }
       if (provider.getPaperImages) {
         const pages = await provider.getPaperImages(session, result.examId, target.subject, result);
         console.log('[live] 试卷原卷页数', pages.length);
@@ -83,7 +128,7 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
       }
       if (provider.getSubjectStatistics) {
         const statistics = await provider.getSubjectStatistics(session, result.examId, target.subject, result);
-        console.log('[live] 科目统计', JSON.stringify(statistics));
+        console.log('[live] 科目统计项数', statistics.length);
       }
     }
   });

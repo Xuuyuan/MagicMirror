@@ -8,7 +8,7 @@ const indexKey = 'magicmirror.accounts.v1';
 const activeKey = 'magicmirror.active.v1';
 const key = (id: string) => `magicmirror.account.${id}`;
 const profileSchema = z.object({ id: z.string(), displayName: z.string(), schoolName: z.string().optional(), grade: z.string().optional(), providerContext: z.record(z.string(), z.string()).optional() });
-const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token']).optional(), password: z.string().optional(), session: sessionSchema.optional(), selectedProfile: profileSchema.optional() });
+const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token']).optional(), loginMethod: z.string().optional(), password: z.string().optional(), session: sessionSchema.optional(), selectedProfile: profileSchema.optional() });
 let queue: Promise<unknown> = Promise.resolve();
 function serialize<T>(operation: () => Promise<T>): Promise<T> {
   const result = queue.then(operation, operation);
