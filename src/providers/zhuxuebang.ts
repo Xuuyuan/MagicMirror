@@ -91,6 +91,7 @@ function questionScoreSummaries(subject: SubjectScore, questions: QuestionScore[
 function businessError(code: number, message = '', authenticating = false): ProviderError {
   if ([401, 101, 701, 702, 705].includes(code)) return new ProviderError('SESSION_EXPIRED', '助学帮登录已失效，请重新登录');
   // -1000 同时用于权限、参数和登录错误，必须结合业务提示分类。
+  if (authenticating && /验证码|安全验证|风控/.test(message)) return new ProviderError('RESTRICTED', '助学帮登录需要安全验证，请先在官方 App 或网页完成验证后再试');
   if (/套餐|购买|付费|未开放|禁止查询|权限|验证码|安全验证|考试密码|单位未授权/.test(message)) return new ProviderError('RESTRICTED', '助学帮暂未开放此内容，请在官方 App 确认查询权限');
   if (authenticating && /密码|账号|手机号|用户不存在/.test(message)) return new ProviderError('INVALID_CREDENTIALS', '助学帮账号或密码不正确');
   if (code === 204 && /为空|无数据/.test(message)) return new ProviderError('NOT_FOUND', '助学帮暂未提供此内容');
@@ -105,6 +106,9 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
     if (revoked.has(session) || session.providerId !== providerId || !session.accessToken) throw new ProviderError('SESSION_EXPIRED', '助学帮登录状态无效');
     return parse(sessionContextSchema, session.providerContext, '会话');
   }
+  // 官方网页版与小程序共用同一登录端点，通道差异只在登录后的请求语义。
+  // 与七天学堂约定一致：providerContext 未标记 loginMethod 一律视为网页版（默认通道），仅小程序通道显式记录。
+  function miniappChannel(session: AuthSession) { return session.providerContext?.loginMethod === 'miniapp'; }
   function queryHeaders(session: AuthSession, exam?: Exam): Record<string, string> {
     const { studentId } = context(session);
     return { token: session.accessToken, stuId: studentId, ...(exam ? {
@@ -168,7 +172,7 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
     }
   }
   async function examResult(session: AuthSession, exam: Exam, requestOptions?: ProviderRequestOptions): Promise<ExamResult> {
-    const value = parse(scoresSchema, await request('/api/v2/Score/GetStuSubScores', { stuNo: exam.stuNo, source: 1 }, queryHeaders(session, exam), requestOptions), '成绩');
+    const value = parse(scoresSchema, await request('/api/v2/Score/GetStuSubScores', { stuNo: exam.stuNo, source: miniappChannel(session) ? 1 : 2 }, queryHeaders(session, exam), requestOptions), '成绩');
     const visible = enabled(value.showScore);
     // 官方将赋分行（原科目 ID + v）与原分行分开返回；入口和后续接口使用原科目。
     const assigned = new Map<string, z.infer<typeof subjectSchema>>();
@@ -265,8 +269,9 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
     return [];
   }
   return {
-    metadata: { id: providerId, name: '助学帮', remark: '五岳阅卷', officialDomain: queryHost, description: '直连助学帮官方服务；查询本人已绑定考试。' },
+    metadata: { id: providerId, name: '助学帮', remark: '五岳阅卷', officialDomain: queryHost, description: '支持网页版登录与小程序登录；直连助学帮官方服务，查询本人已绑定考试。' },
     capabilities: { profile: true, exams: true, results: true, ranking: false, subjectDetails: true, questionScores: true, answerSheets: true },
+    passwordLoginMethods: [{ id: 'web', label: '网页版登录' }, { id: 'miniapp', label: '小程序登录' }],
     async getSearchableExams(session, requestOptions) {
       return (await searchableExams(session, await student(session, requestOptions), requestOptions)).map((item) => ({ id: String(item.examNo), name: item.examName }));
     },
@@ -289,6 +294,10 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
       }
     },
     async authenticate(account, password) {
+      return this.authenticateWithMethod!(account, password, 'web');
+    },
+    async authenticateWithMethod(account, password, method) {
+      if (method !== 'web' && method !== 'miniapp') throw new ProviderError('UNSUPPORTED', '不支持该登录方式');
       if (!account.trim() || !password) throw new ProviderError('INVALID_CREDENTIALS', '请输入助学帮手机号和密码');
       const login = parse(loginSchema, await request('/api/v1/auth/LoginByPassword', { mobile: account.trim(), password }, {}, undefined, true), '登录');
       const headers = { token: login.token };
@@ -296,7 +305,7 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
       if (!students.length) throw new ProviderError('RESTRICTED', '请先在助学帮官方 App 绑定学生');
       if (students.length !== 1) throw new ProviderError('RESTRICTED', '助学帮多学生账号暂不支持，请使用仅绑定一个学生的账号');
       const selected = students[0];
-      const session: AuthSession = { providerId, accountId: account.trim(), accessToken: login.token, providerContext: { studentId: String(selected.id) } };
+      const session: AuthSession = { providerId, accountId: account.trim(), accessToken: login.token, providerContext: { ...(method === 'miniapp' ? { loginMethod: 'miniapp' } : {}), studentId: String(selected.id) } };
       await student(session);
       return session;
     },
