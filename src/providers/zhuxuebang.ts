@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ProviderError, type AnswerSheet, type AuthSession, type ExamResult, type QuestionScore, type QuestionScoreSummary, type StudentProfile, type SubjectScore } from '../domain/models';
+import { ProviderError, type AnswerSheet, type AuthSession, type ExamBindingPreview, type ExamResult, type QuestionScore, type QuestionScoreSummary, type StudentProfile, type SubjectScore } from '../domain/models';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
 import { base64ToBytes, bytesToUtf8, numericScore, parseValidated } from './codec';
@@ -14,7 +14,12 @@ const envelopeSchema = z.object({ code: z.number().int(), message: z.string().op
 const loginSchema = z.object({ token: z.string().min(1) });
 const studentId = identifier.refine((value) => /^\d+$/.test(String(value)) && Number.isSafeInteger(Number(value)) && Number(value) > 0);
 const studentSchema = z.object({ id: studentId, stuName: z.string().min(1), schName: z.string().nullish(), gradeName: z.string().nullish() });
-const profileSchema = studentSchema.extend({ gradeNo: identifier.nullish(), schNo: identifier.nullish() });
+const profileSchema = studentSchema.extend({ gradeNo: identifier.nullish(), schNo: identifier.nullish(), schId: identifier.nullish() });
+const searchableExamSchema = z.object({ examNo: identifier, examName: z.string().min(1), examPno: identifier });
+const bindingStudentSchema = z.object({ schName: z.string(), stuName: z.string().min(1), claName: z.string(), stuNo: z.string().min(1) });
+class AlreadyBoundError extends ProviderError {
+  constructor() { super('RESTRICTED', '该考试已关联，请在考试列表查看'); }
+}
 const sessionContextSchema = z.object({ studentId: z.string().regex(/^\d+$/).refine((value) => Number.isSafeInteger(Number(value)) && Number(value) > 0) });
 const examSchema = z.object({
   examNo: identifier, examPno: identifier, examName: z.string().min(1), stuNo: z.string().min(1),
@@ -118,6 +123,12 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
       if ([403, 429, 451].includes(response.status)) throw new ProviderError('RESTRICTED', '助学帮限制了此请求，请稍后在官方 App 确认');
       if (response.status !== 200) throw new ProviderError('NETWORK', '助学帮服务请求失败', response.status >= 500);
       const result = parse(envelopeSchema, await response.json(), '响应');
+      if (['/api/v1/exam/GetStuExamInfo', '/api/v1/exam/BindStuExam'].includes(path)) {
+        if (result.code === -6000 && result.message === '您已经关联过本场考试，在首页选择相应考试项目即可直接查询！') throw new AlreadyBoundError();
+        if (result.code === -1000 && result.message === '准考证号不存在') throw new ProviderError('NOT_FOUND', '准考证号不存在，请检查考试项目和考号');
+        // 不透出可能包含考生身份的原始业务提示，也不将所有 -6000 误判为重复绑定。
+        if (result.code !== 200 && /考号|准考证|考生|姓名|学生不存在/.test(result.message ?? '')) throw new ProviderError('RESTRICTED', '未能核对本人考生信息，请检查考试项目和准考证号，或到官方平台核实');
+      }
       if (result.code !== 200) throw businessError(result.code, result.message, authenticating);
       return result.datas;
     } catch (error) {
@@ -136,6 +147,25 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
     if (String(value.examNo) !== examId) throw new ProviderError('NOT_FOUND', '助学帮返回了不匹配的考试');
     if (!enabled(value.isAllowQuery)) throw new ProviderError('RESTRICTED', '助学帮尚未开放该考试查询');
     return value;
+  }
+  async function searchableExams(session: AuthSession, profile: z.infer<typeof profileSchema>, requestOptions?: ProviderRequestOptions) {
+    if (!profile.schId) throw new ProviderError('RESTRICTED', '学校信息不完整，请到助学帮官方平台核实');
+    return parse(z.array(searchableExamSchema), await request('/api/v2/exam/SearchExam', { schId: profile.schId }, queryHeaders(session), requestOptions), '考试项目');
+  }
+  async function previewBinding(session: AuthSession, examId: string, studentCode: string, requestOptions?: ProviderRequestOptions): Promise<ExamBindingPreview> {
+    const code = studentCode.trim();
+    if (!examId || !code) throw new ProviderError('NOT_FOUND', '请选择考试项目并填写本人准考证号');
+    const profile = await student(session, requestOptions);
+    const exam = (await searchableExams(session, profile, requestOptions)).find((item) => String(item.examNo) === examId);
+    if (!exam) throw new ProviderError('NOT_FOUND', '该考试已不在本校可查询项目中，请刷新后重新选择');
+    try {
+      const value = parse(bindingStudentSchema, await request('/api/v1/exam/GetStuExamInfo', { stuId: profile.id, examNo: exam.examNo, stuNo: code }, queryHeaders(session), requestOptions), '考生核对');
+      if (value.stuNo !== code || value.stuName !== profile.stuName) throw new ProviderError('RESTRICTED', '考生信息与当前绑定学生不一致，请检查准考证号或到官方平台核实');
+      return { status: 'ready', candidate: { examId, examName: exam.examName, studentId: String(profile.id), studentCode: code, displayName: value.stuName, schoolName: value.schName, className: value.claName } };
+    } catch (error) {
+      if (error instanceof AlreadyBoundError) return { status: 'already-bound' };
+      throw error;
+    }
   }
   async function examResult(session: AuthSession, exam: Exam, requestOptions?: ProviderRequestOptions): Promise<ExamResult> {
     const value = parse(scoresSchema, await request('/api/v2/Score/GetStuSubScores', { stuNo: exam.stuNo, source: 1 }, queryHeaders(session, exam), requestOptions), '成绩');
@@ -237,6 +267,27 @@ export function createZhuxuebangProvider(options: { transport?: FetchTransport }
   return {
     metadata: { id: providerId, name: '助学帮', remark: '五岳阅卷', officialDomain: queryHost, description: '直连助学帮官方服务；查询本人已绑定考试。' },
     capabilities: { profile: true, exams: true, results: true, ranking: false, subjectDetails: true, questionScores: true, answerSheets: true },
+    async getSearchableExams(session, requestOptions) {
+      return (await searchableExams(session, await student(session, requestOptions), requestOptions)).map((item) => ({ id: String(item.examNo), name: item.examName }));
+    },
+    previewExamBinding: previewBinding,
+    async bindExam(session, candidate, requestOptions) {
+      if (candidate.studentId !== context(session).studentId) throw new ProviderError('RESTRICTED', '当前学生已变更，请重新核对考生信息');
+      const current = await previewBinding(session, candidate.examId, candidate.studentCode, requestOptions);
+      if (current.status === 'already-bound') return current;
+      if (Object.keys(current.candidate).some((key) => current.candidate[key as keyof typeof current.candidate] !== candidate[key as keyof typeof candidate])) throw new ProviderError('RESTRICTED', '考生或考试信息已变化，请重新核对后确认');
+      throwIfAborted(requestOptions?.signal);
+      // 提交前再次核对；一旦提交，失效也不得让 withAccount 自动重放写请求。
+      try {
+        await request('/api/v1/exam/BindStuExam', { stuId: Number(candidate.studentId), examNo: /^\d+$/.test(candidate.examId) && Number.isSafeInteger(Number(candidate.examId)) ? Number(candidate.examId) : candidate.examId, stuNo: candidate.studentCode }, queryHeaders(session), requestOptions);
+        return { status: 'bound' };
+      } catch (error) {
+        if (error instanceof AlreadyBoundError) return { status: 'already-bound' };
+        if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw new ProviderError('RESTRICTED', '登录状态已失效，绑定未自动重试；请重新登录并核对');
+        if (error instanceof ProviderError && ['RESTRICTED', 'NOT_FOUND'].includes(error.code)) throw error;
+        throw new ProviderError('NETWORK', '绑定结果尚未确认，请先刷新考试列表核实；请求不会自动重试');
+      }
+    },
     async authenticate(account, password) {
       if (!account.trim() || !password) throw new ProviderError('INVALID_CREDENTIALS', '请输入助学帮手机号和密码');
       const login = parse(loginSchema, await request('/api/v1/auth/LoginByPassword', { mobile: account.trim(), password }, {}, undefined, true), '登录');

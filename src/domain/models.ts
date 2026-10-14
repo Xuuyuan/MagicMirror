@@ -5,6 +5,10 @@ export interface StudentProfile { id: string; displayName: string; schoolName?: 
 export interface ExamSummary { isUnion?: boolean; id: string; name: string; date?: string; /** 考试性质（如「周测」「月考」），平台未给出时由 Provider 兜底为「其它」。 */ category?: string; subjectCount?: number; hasResult?: boolean; availability?: 'unavailable'; }
 export interface UnclaimedExam { id: string; name: string; date?: string; studentCodes: string[]; }
 export interface ClaimCandidate { studentCode: string; url?: string; }
+export interface SearchableExam { id: string; name: string; }
+export interface ExamBindingCandidate { examId: string; examName: string; studentId: string; studentCode: string; displayName: string; schoolName: string; className: string; }
+export type ExamBindingPreview = { status: 'ready'; candidate: ExamBindingCandidate } | { status: 'already-bound' };
+export type ExamBindingResult = { status: 'bound' | 'already-bound' };
 export interface SubjectScore { id?: string; subject: string; score?: number; maxScore?: number; grade?: string; /** 平台明确标记缺考时设置；不能由分数缺失推断。 */ status?: 'absent'; providerContext?: Record<string, string>; }
 export interface Ranking { rank: number; total?: number; /** 区间排名的上界（如官方下发「1~20」时 rank=1、rankMax=20）；缺省表示精确名次。 */ rankMax?: number; label?: string; scope?: 'class' | 'grade' | 'group'; }
 export interface DefeatRate { scope: 'class' | 'grade'; value: number; }

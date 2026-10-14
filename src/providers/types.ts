@@ -1,4 +1,4 @@
-import type { AnswerSheet, AuthSession, ClaimCandidate, EssayDetail, ExamResult, ExamSummary, ProviderCapabilities, StudentProfile, SubjectDetail, SubjectStatistic, UnclaimedExam } from '@/src/domain/models';
+import type { AnswerSheet, AuthSession, ClaimCandidate, EssayDetail, ExamBindingCandidate, ExamBindingPreview, ExamBindingResult, ExamResult, ExamSummary, ProviderCapabilities, SearchableExam, StudentProfile, SubjectDetail, SubjectStatistic, UnclaimedExam } from '@/src/domain/models';
 export interface ScoreProviderMetadata { id: string; name: string; /** 仅用于平台选择界面的名称补充。 */ remark?: string; description: string; officialDomain?: string; }
 export interface ProviderRequestOptions { signal?: AbortSignal; }
 export interface PasswordLoginMethod { id: string; label: string; }
@@ -12,6 +12,10 @@ export interface ScoreProvider { readonly metadata: ScoreProviderMetadata; reado
   getUnclaimedExams?(session: AuthSession, options?: ProviderRequestOptions): Promise<UnclaimedExam[]>;
   getClaimCandidates?(session: AuthSession, examId: string, studentCodes: string[], options?: ProviderRequestOptions): Promise<ClaimCandidate[]>;
   claimExam?(session: AuthSession, examId: string, studentCode: string, options?: ProviderRequestOptions): Promise<void>;
+  getSearchableExams?(session: AuthSession, options?: ProviderRequestOptions): Promise<SearchableExam[]>;
+  previewExamBinding?(session: AuthSession, examId: string, studentCode: string, options?: ProviderRequestOptions): Promise<ExamBindingPreview>;
+  /** 仅在用户确认 candidate 后调用；实现必须重新核对，且写请求不得自动重放。 */
+  bindExam?(session: AuthSession, candidate: ExamBindingCandidate, options?: ProviderRequestOptions): Promise<ExamBindingResult>;
   /** 可选能力：本人作答的答题卡（扫描件）地址；平台未提供时返回空数组或省略该方法。 */
   getAnswerSheets?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]>;
   /** 可选能力：带分数水印的答题卡（图片上标注各题得分）；与 `getAnswerSheets` 的无水印版相互独立。 */
