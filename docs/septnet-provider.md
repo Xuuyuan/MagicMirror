@@ -2,6 +2,19 @@
 
 官方服务：`https://szone-my.7net.cc/`（认证、资料）、`https://szone-score.7net.cc/`（考试、成绩）。设备直连官方服务，密码登录；认证凭据沿用 SecureStore，不新增转发后端。
 
+## 登录方式
+
+- **官方APP登录**： `szone-my.7net.cc/login` 账号密码登录。新增账号默认选择此项，旧账号没有 `loginMethod` 时也沿用此项。
+- **小程序登录**：设备向 `https://szone-public.7net.cc/publicszoneui.service/XCXService/Login` 提交 HTTPS 表单，使用 `userCode`、未做 App 后缀编码的 `userPass`、固定 `openId`、空 `unionid`、空 `token` 和版本号。不包含短信与微信授权登录。
+- `openId` 固定算法：`SHA-256("magicmirror:septnet:miniapp:openid:v1:" + account.trim())` 的小写十六进制前 28 位。同账号跨设备、重装、改密保持一致；它是客户端生成标识，不代表微信颁发的身份。算法命名空间与长度不可随意修改。
+- 登录方式单独保存在 SecureStore 账号记录的 `loginMethod`（`app` / `miniapp`）中。编辑时可复用同账号已保存密码；认证成功才替换配置与缓存，失败保留原配置。失效后沿原通道重新认证，不自动回退。
+- 两条登录通道共用数据模型，但分别请求对应官方接口。小程序 Token 请求 App 资料接口返回非 JSON、请求 App 考试列表返回会话失效，因此小程序会话通过 `providerContext.loginMethod` 选择 `UserService/info`、`ExamNService/ClaimExams`、`QuestionNService/*` 和 `ExamService/*`；不回退 App 登录，不额外创建 App Token。
+- 固定生成标识与空 `unionid` 可登录；学生信息、考试列表、一场成绩、两种答题卡、原卷、作文作答及科目统计查询通过。登录前后 `isWXBind` 一致，原 App 会话仍可查询同一学生。
+
+联网验证沿用 `src/__tests__/septnet.live.check.ts`，通过环境变量提供 `SEPTNET_ACCOUNT`、`SEPTNET_PASSWORD`，另设 `SEPTNET_LOGIN_METHOD=miniapp` 选择新通道；凭据不写入源码或 Git。检查先取得 App 基准会话，再对照小程序登录前后的微信绑定标志、学生身份与原会话可用性，仅输出验证状态及计数。
+
+人工验收：添加七天账号分别选择两种方式，检查登录、考试、成绩、答题卡、原卷和作文；重启并编辑确认方式保留；切换方式保存后检查数据刷新，错误密码应保留旧配置。
+
 ## 单场考试初版
 
 - 考试详情：保留基础分数与赋分、缺考、人数。总分等级及区间放在顶部“总分”右侧，完整发布时间在总分卡片单独一行，联考/校考徽标放在考生人数旁。不再提供“考试信息”卡片。

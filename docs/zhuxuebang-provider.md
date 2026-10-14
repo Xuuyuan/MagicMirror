@@ -2,11 +2,11 @@
 
 Provider ID 为 `zhuxuebang`，名称为“助学帮”，备注为“五岳阅卷”。备注仅显示在平台选择控件中，主界面和账号列表使用原名称。
 
-设备直接访问官方 `https://stuquery.wylkyj.com`，账号密码通过 `/api/v1/auth/LoginByPassword` 的 `mobile`、`password` 字段登录，认证头为 `token`。认证信息使用项目现有 SecureStore 账号层保存，失效重登录复用业务层机制。
+设备直接访问官方 `https://stuquery.wylkyj.com`。密码登录提供**网页版（默认）**与**小程序**两个通道，官方两端共用 `/api/v1/auth/LoginByPassword` 的 `mobile`、`password` 字段与 `token` 认证头，通道差异只在登录后的请求语义；未标记通道的会话视为网页版，仅小程序通道在 `providerContext` 记录 `loginMethod: 'miniapp'`。认证信息使用项目现有 SecureStore 账号层保存，失效重登录复用业务层机制。
 
 目前支持单学生账号登录、学生信息、分页考试列表、成绩、无水印答题卡和逐题明细。多学生账号暂不支持，不按未确认含义的标志自动选择学生，也不调用切换或绑定学生的写接口。
 
-考试列表使用 `/api/v2/exam/GetStuExamList`，Provider 将统一 `offset` 转成 20 条一页的 `pageIndex`、`pageSize`。查询详情前调用 `/api/v2/exam/CheckExamState`，确认考试标识及 `isAllowQuery`，再调用 `/api/v2/Score/GetStuSubScores`（`source: 1`）。成绩请求头包含 `stuId`、`exam_no`、`exam_pno`；`examPno` 为零时按官方 H5 规则发送空字符串，不能发送 `"0"`。
+考试列表使用 `/api/v2/exam/GetStuExamList`，Provider 将统一 `offset` 转成 20 条一页的 `pageIndex`、`pageSize`。查询详情前调用 `/api/v2/exam/CheckExamState`，确认考试标识及 `isAllowQuery`，再调用 `/api/v2/Score/GetStuSubScores`（网页版 `source: 2`，小程序 `source: 1`）。成绩请求头包含 `stuId`、`exam_no`、`exam_pno`；`examPno` 为零时按官方 H5 规则发送空字符串，不能发送 `"0"`。
 
 按官方页面语义处理 `showScore`、`scaleScore`、`giveScore`、`rawScore`：隐藏或缺失的分数不转成零，赋分科目保留原始分。`statType=1` 的赋分行在 ID 为原科目 ID 加 `v`、名称与原科目一致时合并，以原科目名称和 ID 作为详情、逐题明细和答题卡入口；主分数显示赋分，并保留原始分。科目满分取官方 `subScore`；人数及排名保持未提供，不求和推算总分。考试日期展示为 `YYYY-MM-DD`，去掉接口附带的时间。
 
@@ -14,7 +14,7 @@ Provider ID 为 `zhuxuebang`，名称为“助学帮”，备注为“五岳阅�
 
 答题卡使用 `/api/v1/Score/GetStuAnswersheet`，只接受 `https://data.wylkyj.com/AnswerSheet/` 下的官方签名图片地址。`statType=5` 且带 `mergeSubInfo` 时，按官方页面使用合并科目的 `esubNo`。返回 `watermarked: false`，这些图片没有评分水印，不用于推算逐题得分。签名 URL 由 TanStack Query 管理，重新查询可以获取新的临时地址。
 
-逐题明细来自 `https://onlinexam.wylkyj.com/api/v1/subject/GetSubQueList`。该域不复用查询 Token，按本人已绑定考试调用 `student/StuLogin` 换取独立 JWT，字符串字段为 `examNo/gradeNo/schNo/stuNo`，`platform: 0`、`deviceId: 'MagicMirror'`。JWT 放在 `token` 头，不能放在 `Authorization`。JWT 只在 Provider 内存中缓存，按查询会话、学生、考试及考号隔离，校验声明归属和过期时间；内容数据继续由 TanStack Query 缓存。
+逐题明细来自 `https://onlinexam.wylkyj.com/api/v1/subject/GetSubQueList`。该域不复用查询 Token，按本人已绑定考试调用 `student/StuLogin` 换取独立 JWT，字符串字段为 `examNo/gradeNo/schNo/stuNo`，`platform: 0`、`deviceId: 'MagicMirror'`。JWT 放在 `token` 头，不能放在 `Authorization`。JWT 只在 Provider 内存中缓存，按查询会话、学生、考试及考号隔离，校验声明归属和过期时间；内容数据继续由 TanStack Query 缓存。两个登录通道共用 onlinexam 链路。
 
 查询题目之前确认考试学生信息中的 `isPassWord`；需要考试密码时提示到官方 App 查看，不请求密码校验接口。考试 Token 失效时只重换一次，不将查询 Token 标记失效。客观题映射题号、满分、得分和作答，保留零分及多选部分得分；主观题 `stuScore=-1` 保持缺失。答案数组规范化为展示字符串，题干 HTML 不注入界面。
 
@@ -28,16 +28,37 @@ Provider ID 为 `zhuxuebang`，名称为“助学帮”，备注为“五岳阅�
 
 | 能力 | 范围 |
 | --- | --- |
-| 登录、学生信息 | 账号密码登录；暂限仅绑定一个学生的账号 |
+| 登录、学生信息 | 网页版登录（默认）与小程序登录；暂限仅绑定一个学生的账号 |
 | 考试、成绩 | 本人正常可查询的已绑定考试；遵守学校查询及分数展示开关 |
 | 逐题明细 | 当前账号有权读取的在线考试数据；客观题有得分，主观题可能仅有满分 |
 | 答题卡 | 官方无水印扫描图，可使用现有放大及保存入口 |
 | 排名、考生人数、分析报告 | 暂不提供未经验证或受权益限制的数据 |
-| 认领、答题、作业、商城 | 未接入，不执行绑定、提交、购买或广告解锁 |
+| 搜索考试项目、绑定 | 本校项目列表，输入本人准考证号，核对姓名并显式确认后绑定 |
+| 答题、作业、商城 | 未接入，不执行提交、购买或广告解锁 |
 
 查询 Token 失效由账号业务层恢复；新考试 Token 的登录或校验被拒绝只报告考试访问限制，不误触发主账号重登录。JWT 不持久化，重启 App 后需要时重新获取。跨账号内容隔离继续使用现有 TanStack Query 的账号 ID 和 revision。
 
 ## 验证与复现
+
+### 搜索考试项目
+
+首页“搜索考试项目”按 Provider 可选方法显示，在暂无已绑定考试时也可使用。独立页面支持下拉框选择考试、填写本人准考证号、核对后确认绑定；原有七天学堂待认领流程保持独立。
+
+设备直接访问以下官方接口，学校和学生标识从当前会话读取，不允许输入或猜测：
+
+| 步骤 | 接口 | 请求体 / 返回数据 |
+| --- | --- | --- |
+| 项目列表 | `/api/v2/exam/SearchExam` | `{ schId }`；数组项为 `examNo/examName/examPno`，无日期字段 |
+| 核对考生 | `/api/v1/exam/GetStuExamInfo` | `{ stuId, examNo, stuNo }`；`schName/stuName/claName/stuNo` |
+| 确认绑定 | `/api/v1/exam/BindStuExam` | `{ stuId, examNo, stuNo }`；成功为 `code=200`、`message=绑定成功`、`datas=null` |
+
+重复绑定和已关联考试的考生核对均可能返回 `code=-6000`、`您已经关联过本场考试，在首页选择相应考试项目即可直接查询！`；该状态不能证明输入考号正确。另两场未绑定考试的指定错误考号核对返回 `code=-1000`、`准考证号不存在`。只识别这两种明确业务提示，其他 `-6000` 不误判为成功。真实身份、考号和考试标识不写入测试。
+
+输入只去掉首尾空白、保留前导零。考生姓名必须与当前学生完全一致，返回考号也必须一致；不照搬网页版姓名不符后继续绑定的分支。确认前重新获取学生、项目和考生信息，任何确认字段变化都要求重新核对。取消、修改输入、切换账号或编辑账号会使旧页面核对结果失效。
+
+绑定使用不自动重试的 mutation；账号层不得自动恢复会话并重放写请求。超时或无法解析提交响应时提示结果未确认，先返回考试列表核实。成功或已关联后刷新当前账号考试列表；刷新失败保留成功状态，重试只刷新列表。预览和考号仅保存在页面内存，不进入路由参数或独立持久化存储。
+
+离线测试覆盖错误考号、姓名不符、旧预览晚返回、确认字段变化、重复点击、重复绑定、会话失效、取消和刷新失败。可选 `src/__tests__/zhuxuebang-binding.live.check.ts` 仅检查项目列表与已绑定预览，不写入；通过进程环境提供凭据、考试名称与本人考号后单独运行。新考试绑定成功和重复绑定的真实响应已在授权接口测试中确认，最终 Android 页面操作仍需人工验收。
 
 离线检查为 `npm run lint`、`npm run typecheck`、`npm test`。`src/__tests__/zhuxuebang.test.ts` 使用虚构信息覆盖分页占位、查询权限、原始分/赋分、字段校验、图片域名、会话归属、过期和权益限制。
 
@@ -56,5 +77,8 @@ npx jest --runInBand --runTestsByPath src/__tests__/zhuxuebang.live.check.ts --t
 3. 打开语文、数学或英语单科，核对题号、客观题满分/得分及答案；主观题未提供得分时只能显示满分，不能显示零分。测试“只看错题”。
 4. 从单科进入答题卡，核对页数和本人扫描内容；测试双击放大及长按保存。图片过期后使用“重新获取答题卡”。
 5. 切换其他账号再切回，重启 App 后再次查询，确认数据及会话不串用。网络中断应提示网络错误，不能被当作密码错误。
+6. 点击“搜索考试项目”，通过下拉框选择考试。空考号不能核对；错误考号提示后可修改。核对成功后改变考号或考试，旧确认卡必须消失。
+7. 用本人未绑定考试核对学校、姓名、班级和考号，再点击“确认绑定”；成功后首页出现该考试。已关联考试应返回列表，不再次提交。绑定期间按钮不可重复点击。
+8. 在核对期间返回或切换账号，不得出现旧账号确认卡。绑定成功后列表刷新失败应显示“绑定状态已确认”，点击重新刷新不能再次绑定。
 
 这些步骤仍需在最终 Android 安装包上执行；Node 直连和 Hermes bundle 导出不能替代真机界面验收。
