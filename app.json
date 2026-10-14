@@ -2,19 +2,19 @@
   "expo": {
     "name": "魔镜",
     "slug": "magic-mirror",
-    "version": "1.0.0-beta.9",
+    "version": "1.0.0-beta.10",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "magicmirror",
     "plugins": ["expo-router", "expo-secure-store", "expo-media-library", "./plugins/with-report-network", "./plugins/with-release-build"],
-    "extra": { "diagnosticsBuild": "20261013-beta9" },
+    "extra": { "diagnosticsBuild": "20261014-beta10" },
     "experiments": { "typedRoutes": true },
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "versionCode": 9,
+      "versionCode": 10,
       "permissions": ["android.permission.REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#F2F5FC",
