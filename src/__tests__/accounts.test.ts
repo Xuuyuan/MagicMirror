@@ -11,6 +11,21 @@ jest.mock('expo-secure-store', () => {
 
 const base: LocalAccount = { id: 'fictional-account', revision: 'r1', label: '虚构', providerId: 'haofenshu-parent', login: 'fictional', authMode: 'token', session: { providerId: 'haofenshu-parent', accountId: 'fictional', accessToken: 'TEST_TOKEN' } };
 afterEach(() => jest.restoreAllMocks());
+it('保存小程序通道并在失效后沿原通道恢复；切换失败保留原配置', async () => {
+  const provider = providerRegistry.get('septnet')!;
+  const session = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN' };
+  const login = jest.spyOn(provider, 'authenticateWithMethod').mockResolvedValue(session);
+  const appLogin = jest.spyOn(provider, 'authenticate');
+  const account = await authenticateAccount({ label: '虚构', providerId: 'septnet', login: 'fictional', password: 'fictional-password', loginMethod: 'miniapp' });
+  await accountStorage.save({ ...account, session: { ...session, expiresAt: 0 } });
+  expect((await accountStorage.load(account.id))?.loginMethod).toBe('miniapp');
+  await withAccount(account.id, async () => []);
+  expect(login).toHaveBeenLastCalledWith('fictional', 'fictional-password', 'miniapp');
+  expect(appLogin).not.toHaveBeenCalled();
+  login.mockRejectedValue(new ProviderError('INVALID_CREDENTIALS', 'fictional failure'));
+  await expect(authenticateAccount({ id: account.id, label: '虚构', providerId: 'septnet', login: 'fictional', loginMethod: 'app' })).rejects.toThrow('fictional failure');
+  expect((await accountStorage.load(account.id))?.loginMethod).toBe('miniapp');
+});
 /** 好分数家长版登录后会列出绑定学生；这些用例只关心账号服务，替身掉真实网络请求。 */
 function stubProfileLookup() {
   const provider = providerRegistry.get('haofenshu-parent')!;

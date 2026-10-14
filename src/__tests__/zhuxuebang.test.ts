@@ -40,6 +40,22 @@ describe('助学帮基础查询（虚构数据，无网络）', () => {
       expect(transport).toHaveBeenCalledTimes(2);
     }
   });
+  it('公开网页版和小程序登录方式，拒绝未知通道', async () => {
+    expect(providerRegistry.get('zhuxuebang')?.passwordLoginMethods).toEqual([{ id: 'web', label: '网页版登录' }, { id: 'miniapp', label: '小程序登录' }]);
+    const { provider, transport } = setup([]);
+    await expect(provider.authenticateWithMethod!('fictional-login', 'fictional-password', 'sms')).rejects.toMatchObject({ code: 'UNSUPPORTED' });
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('小程序通道显式标记会话且成绩 source 为 1；网页版通道不标记', async () => {
+    const miniapp = setup([ok({ token: 'fictional-token' }), ok([student]), ok(student)]);
+    const miniSession = await miniapp.provider.authenticateWithMethod!('fictional-login', 'fictional-password', 'miniapp');
+    expect(miniSession.providerContext).toEqual({ studentId: '11', loginMethod: 'miniapp' });
+    const miniScores = setup([ok(exam), ok(scores)]);
+    await miniScores.provider.getExamResult(miniSession, '1001');
+    expect(requestAt(miniScores.transport, 1).body).toEqual({ stuNo: exam.stuNo, source: 1 });
+    const web = setup([ok({ token: 'fictional-token' }), ok([student]), ok(student)]);
+    await expect(web.provider.authenticateWithMethod!('fictional-login', 'fictional-password', 'web')).resolves.toEqual(session);
+  });
   it('学生详情不匹配时拒绝使用另一学生的上下文', async () => {
     const { provider } = setup([ok({ ...student, id: 12 })]);
     await expect(provider.getProfile(session)).rejects.toMatchObject({ code: 'RESTRICTED' });
@@ -104,7 +120,8 @@ describe('助学帮基础查询（虚构数据，无网络）', () => {
     expect(requestAt(transport, 0).url).toContain('/exam/CheckExamState');
     expect(requestAt(transport, 1).headers.get('exam_pno')).toBe('');
     expect(requestAt(transport, 1).headers.get('exam_no')).toBe('1001');
-    expect(requestAt(transport, 1).body).toEqual({ stuNo: exam.stuNo, source: 1 });
+    // 未标记 loginMethod 的会话视为网页版默认通道，成绩请求使用 source: 2。
+    expect(requestAt(transport, 1).body).toEqual({ stuNo: exam.stuNo, source: 2 });
   });
   it('项目号非零时保留，关闭查询后不继续请求成绩', async () => {
     const { provider, transport } = setup([ok({ ...exam, examPno: 20 }), ok(scores)]);
@@ -142,6 +159,10 @@ describe('助学帮基础查询（虚构数据，无网络）', () => {
     await expect(network.provider.getProfile(session)).rejects.toMatchObject({ code: 'NETWORK' });
     const invalid = setup([ok({ secret: 'fictional-secret' })]);
     await expect(invalid.provider.getProfile(session)).rejects.toThrow('助学帮学生信息结构不符合预期');
+  });
+  it('登录要求安全验证时引导官方渠道，不当作凭据错误或权限限制', async () => {
+    const { provider } = setup([{ code: -1000, message: '操作存在风险，请输入验证码' }]);
+    await expect(provider.authenticate('fictional-login', 'fictional-password')).rejects.toMatchObject({ code: 'RESTRICTED', message: '助学帮登录需要安全验证，请先在官方 App 或网页完成验证后再试' });
   });
   it('拒绝跨 Provider 会话，不发送请求', async () => {
     const { provider, transport } = setup([]);

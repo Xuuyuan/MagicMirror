@@ -24,6 +24,7 @@ const mockResult: ExamResult = {
 jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useLocalSearchParams: () => ({ accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学' }) }));
 jest.mock('../accounts-context', () => ({ useAccounts: () => ({ accounts: [{ id: 'fictional', revision: 'r1', providerId: mockProviderId }] }) }));
 jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
+jest.mock('../services/exam-binding', () => ({ supportsExamBinding: () => false }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');

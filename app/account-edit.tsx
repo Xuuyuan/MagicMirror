@@ -22,6 +22,7 @@ export default function AccountEdit() {
   const [savedPasswordIdentity, setSavedPasswordIdentity] = useState<{ providerId: string; login: string }>();
   const [replacingPassword, setReplacingPassword] = useState(false);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<string>();
   const selectedProvider = providerRegistry.get(providerId);
   const providerName = selectedProvider ? providerSelectionName(selectedProvider.metadata) : providerId;
   const tokenSupported = providerRegistry.get(providerId)?.authenticateWithToken !== undefined;
@@ -29,7 +30,7 @@ export default function AccountEdit() {
   const showPasswordInput = !canReusePassword || replacingPassword;
   const identityChanged = !!id && !!savedPasswordIdentity && !canReusePassword;
   const canSubmit = !loading && !busy && (tokenMode ? !!token.trim() : !!login.trim() && (!showPasswordInput || !!password.length));
-  useEffect(() => { if (!id) return; let alive = true; void accountStorage.load(id).then((account) => { if (!alive || !account) return; setLabel(account.label); setLogin(account.login); setProviderId(account.providerId); setSavedPasswordIdentity(account.password ? { providerId: account.providerId, login: account.login } : undefined); setTokenMode(account.authMode === 'token' || (!account.password && !!providerRegistry.get(account.providerId)?.authenticateWithToken)); }).finally(() => { if (alive) setLoading(false); }); return () => { alive = false; }; }, [id]);
+  useEffect(() => { if (!id) return; let alive = true; void accountStorage.load(id).then((account) => { if (!alive || !account) return; setLabel(account.label); setLogin(account.login); setLoginMethod(account.loginMethod); setProviderId(account.providerId); setSavedPasswordIdentity(account.password ? { providerId: account.providerId, login: account.login } : undefined); setTokenMode(account.authMode === 'token' || (!account.password && !!providerRegistry.get(account.providerId)?.authenticateWithToken)); }).finally(() => { if (alive) setLoading(false); }); return () => { alive = false; }; }, [id]);
   function resetPasswordInput() {
     setPassword('');
     setPasswordVisible(false);
@@ -43,7 +44,7 @@ export default function AccountEdit() {
     try {
       let account;
       try {
-        account = await authenticateAccount({ id, label, login, providerId, password, token: tokenMode ? token : undefined });
+        account = await authenticateAccount({ id, label, login, providerId, password, loginMethod: loginMethod ?? selectedProvider?.passwordLoginMethods?.[0]?.id, token: tokenMode ? token : undefined });
       } catch (failure) {
         setError(failure instanceof ProviderError ? failure.message : '登录未完成，请检查网络后重试');
         return;
@@ -60,8 +61,18 @@ export default function AccountEdit() {
   return <Screen><Header title={id ? '编辑账号' : '添加账号'} back /><Body>{loading ? <LoadingState label="正在读取账号…" /> : <Card>
     <Text variant="titleMedium">阅卷平台</Text>
     <Menu visible={providerMenu} onDismiss={() => setProviderMenu(false)} statusBarHeight={0} anchorPosition="bottom" contentStyle={{ width: screenWidth - 64 }} anchor={<Button mode="outlined" icon="chevron-down" disabled={busy} onPress={() => setProviderMenu(true)} style={{ width: '100%' }} contentStyle={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>{providerName}</Button>}>
-      {providerRegistry.list().map((provider) => <Menu.Item key={provider.metadata.id} leadingIcon={provider.metadata.id === providerId ? 'check' : undefined} title={providerSelectionName(provider.metadata)} disabled={busy} onPress={() => { if (provider.metadata.id !== providerId) resetPasswordInput(); setProviderId(provider.metadata.id); setTokenMode(false); setProviderMenu(false); }} />)}
+      {providerRegistry.list().map((provider) => <Menu.Item key={provider.metadata.id} leadingIcon={provider.metadata.id === providerId ? 'check' : undefined} title={providerSelectionName(provider.metadata)} disabled={busy} onPress={() => { if (provider.metadata.id !== providerId) { resetPasswordInput(); setLoginMethod(undefined); } setProviderId(provider.metadata.id); setTokenMode(false); setProviderMenu(false); }} />)}
     </Menu>
+    {!tokenMode && selectedProvider?.passwordLoginMethods && <View style={{ gap: 8 }}>
+      <Text variant="titleMedium">登录方式</Text>
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        {selectedProvider.passwordLoginMethods.map((method) => {
+          const selected = method.id === (loginMethod ?? selectedProvider.passwordLoginMethods?.[0]?.id);
+          return <Button key={method.id} mode={selected ? 'contained-tonal' : 'outlined'} accessibilityState={{ selected }} disabled={busy}
+            onPress={() => { setLoginMethod(method.id); setError(''); }} style={{ flex: 1 }}>{method.label}</Button>;
+        })}
+      </View>
+    </View>}
     {tokenSupported && <Button compact disabled={busy} onPress={() => { resetPasswordInput(); setTokenMode(!tokenMode); }}>{tokenMode ? '改用账号密码登录' : '使用 Token 登录'}</Button>}
     <TextInput mode="outlined" label="账号备注" value={label} onChangeText={setLabel} disabled={busy} />
     <TextInput mode="outlined" label={tokenMode ? '账号标识（可选）' : '登录账号'} value={login} onChangeText={(value) => { if (value.trim() !== login.trim()) resetPasswordInput(); setLogin(value); }} autoCapitalize="none" disabled={busy} />

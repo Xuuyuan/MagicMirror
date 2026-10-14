@@ -1,10 +1,15 @@
 import { ecb, gcm } from '@noble/ciphers/aes.js';
 import {
   base64ToBytes, bytesToBase64, bytesToUtf8, createSeptnetProvider, numericScore,
-  platformResponseKey, rsaEncryptPkcs1, utf8ToBytes,
+  platformResponseKey, rsaEncryptPkcs1, utf8ToBytes, septnetOpenId,
 } from '@/src/providers/septnet';
 import type { AuthSession, ExamResult } from '@/src/domain/models';
 import { providerRegistry } from '@/src/providers/registry';
+jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digestStringAsync: async (_algorithm: string, value: string) =>
+    jest.requireActual<{ createHash: (algorithm: string) => { update: (value: string) => { digest: (encoding: string) => string } } }>('node:crypto').createHash('sha256').update(value).digest('hex'),
+}));
 
 /** 固定模式的伪随机源：让测试能推算出 Provider 本次使用的会话密钥。 */
 const testRandom = (size: number) => Uint8Array.from({ length: size }, (_, i) => ((i * 11 + 5) % 255) + 1);
@@ -81,6 +86,60 @@ describe('Septnet 加密层（自造向量，无网络）', () => {
 });
 
 describe('Septnet Provider（无网络）', () => {
+  it('固定 openId 向量，首尾空格不改变标识，不同账号保持区分', async () => {
+    expect(await septnetOpenId('fictional-account')).toBe('6929b847fbdf31b6c69bcdec7044');
+    expect(await septnetOpenId(' fictional-account ')).toBe(await septnetOpenId('fictional-account'));
+    expect(await septnetOpenId('fictional-other')).not.toBe(await septnetOpenId('fictional-account'));
+  });
+
+  it('小程序密码登录使用固定标识并建立现有查询上下文', async () => {
+    const { provider, transport } = setup([
+      obfuscated({ token: 'TEST_TOKEN_0123456789' }),
+      obfuscated({ schoolGuid: 'SCHOOL-GUID-0001', currentGrade: 'A10' }),
+    ]);
+    const session = await provider.authenticateWithMethod!(' fictional-account ', 'fictional-password', 'miniapp');
+    expect(session).toMatchObject({ accountId: 'fictional-account', accessToken: 'TEST_TOKEN_0123456789',
+      providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10' } });
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls[0][0]).toBe('https://szone-public.7net.cc/publicszoneui.service/XCXService/Login');
+    expect(Object.fromEntries(new URLSearchParams(String(calls[0][1].body)))).toEqual({
+      userCode: 'fictional-account', userPass: 'fictional-password', openId: '6929b847fbdf31b6c69bcdec7044',
+      unionid: '', token: '', version: '4.6.4',
+    });
+    expect((calls[0][1].headers as Record<string, string>).Token).toBeUndefined();
+  });
+
+  it('小程序错误密码不回退 App 登录，无效通道不发请求', async () => {
+    const { provider, transport } = setup([{ status: 403 }]);
+    await expect(provider.authenticateWithMethod!('fictional', 'password', 'miniapp')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+    expect(transport).toHaveBeenCalledTimes(1);
+    await expect(provider.authenticateWithMethod!('fictional', 'password', 'unknown')).rejects.toMatchObject({ code: 'UNSUPPORTED' });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('小程序会话的成绩与认领操作只走对应小程序接口', async () => {
+    const session: AuthSession = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN_0123456789',
+      providerContext: { loginMethod: 'miniapp', schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10', studentName: '虚构学生' } };
+    const { provider, transport } = setup([
+      obfuscated(examList), obfuscated({ config: {}, charge: {} }), obfuscated(subjects), obfuscated(report),
+      obfuscated([]), { status: 200 }, obfuscated([]), { status: 200 },
+    ]);
+    const result = await provider.getExamResult(session, 'EXAM-0001-AAAA');
+    expect(result.totalScore).toBe(238);
+    expect(await provider.getUnclaimedExams!(session)).toEqual([]);
+    await provider.loadExam!(session, 'EXAM-0001-AAAA');
+    expect(await provider.getClaimCandidates!(session, 'EXAM-0001-AAAA', ['fictional-code'])).toEqual([]);
+    await provider.claimExam!(session, 'EXAM-0001-AAAA', 'fictional-code');
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.map(([url]) => url.replace('https://szone-public.7net.cc/publicszoneui.service/', ''))).toEqual([
+      'ExamNService/ClaimExams', 'QuestionNService/Config', 'QuestionNService/Subjects', 'QuestionNService/ScoreReport',
+      'ExamService/UnclaimExams', 'ExamService/SetView', 'ExamService/UnClaimImg', 'ExamService/ClaimExam',
+    ]);
+    for (const [, init] of calls) {
+      expect(new URLSearchParams(String(init.body)).get('token')).toBe(session.accessToken);
+      expect((init.headers as Record<string, string>).Token).toBeUndefined();
+    }
+  });
   it.each([true, false, undefined])('列表补取联考属性 %s，未返回时不猜测，待认领考试不发附加请求', async (isUnion) => {
     const session: AuthSession = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN_0123456789',
       providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10' } };

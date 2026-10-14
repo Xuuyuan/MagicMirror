@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ecb, gcm } from '@noble/ciphers/aes.js';
-import { getRandomBytes } from 'expo-crypto';
+import { CryptoDigestAlgorithm, digestStringAsync, getRandomBytes } from 'expo-crypto';
 import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type SubjectStatistic, type UnclaimedExam } from '../domain/models';
 import { distributionSection, essaySection } from './septnet-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
@@ -28,6 +28,11 @@ const scoreHost = 'https://szone-score.7net.cc/';
 // 小程序接口面：明文表单 + token/version 参数，与 App 登录共用同一 token（见 analysis/qitianxuetang/interface-audit.md）。
 const publicHost = 'https://szone-public.7net.cc/';
 const version = '4.6.4';
+/** 固定协议：不要修改命名空间、规范化规则或截断长度，避免已有账号的标识变化。 */
+export async function septnetOpenId(account: string): Promise<string> {
+  return (await digestStringAsync(CryptoDigestAlgorithm.SHA256,
+    'magicmirror:septnet:miniapp:openid:v1:' + account.trim())).slice(0, 28);
+}
 // 实测：App 用 WebView UA 发请求；固定为该形态即可通过。
 const userAgent = 'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) AppleWebKit/537.36'
   + ' (KHTML, like Gecko) Version/4.0 Chrome/110.0.5481.154 Mobile Safari/537.36';
@@ -288,6 +293,9 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
   }
 
   async function userInfo(session: AuthSession, options?: ProviderRequestOptions) {
+    if (session.providerContext?.loginMethod === 'miniapp') {
+      return parse(profileSchema, await publicPost(session, 'publicszoneui.service/UserService/info', {}, options), '学生信息');
+    }
     const sealed = seal({});
     const body = await request(host + 'userInfo/GetUserInfo', {
       method: 'GET',
@@ -299,6 +307,11 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
 
   async function examPage(session: AuthSession, startIndex: number, rows: number, options?: ProviderRequestOptions) {
     const target = context(session);
+    if (session.providerContext?.loginMethod === 'miniapp') {
+      return parse(examPageSchema, await publicPost(session, 'publicszoneui.service/ExamNService/ClaimExams', {
+        startIndex: String(startIndex), rows: String(rows), schoolGuid: target.schoolGuid, grade: target.grade,
+      }, options), '考试列表');
+    }
     const query = `startIndex=${startIndex}&rows=${rows}`
       + `&schoolGuid=${encodeURIComponent(target.schoolGuid)}&grade=${encodeURIComponent(target.grade)}`;
     const body = await request(scoreHost + 'exam/getClaimExams?' + query, {
@@ -308,6 +321,9 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
   }
 
   async function encryptedPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+    if (session.providerContext?.loginMethod === 'miniapp') {
+      return publicPost(session, route.replace(/^Question\//, 'publicszoneui.service/QuestionNService/'), params, options);
+    }
     const sealed = seal(params);
     const body = await request(scoreHost + route, {
       method: 'POST',
@@ -318,6 +334,11 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
   }
 
   async function formPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+    if (session.providerContext?.loginMethod === 'miniapp') {
+      const routes: Record<string, string> = { 'exam/SetView': 'SetView', 'exam/UnClaimImg': 'UnClaimImg', 'exam/claimExam': 'ClaimExam' };
+      if (!routes[route]) throw new ProviderError('UNSUPPORTED', '小程序接口不支持该操作');
+      return publicPost(session, 'publicszoneui.service/ExamService/' + routes[route], params, options);
+    }
     const body = await request(scoreHost + route, {
       method: 'POST',
       headers: headers(session, { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;' }),
@@ -401,18 +422,27 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
     metadata: {
       id: providerId, name: '七天学堂',
       remark: '七天网络',
-      description: '直连官方服务；仅支持密码登录，排名能力平台未提供。',
+      description: '支持官方APP登录与小程序登录；使用账号密码直连官方服务。',
       officialDomain: host,
     },
     // 实测：平台只提供「等级位置」，且非会员被门控拦截（charge.ShowPosition=false）。
     capabilities: { profile: true, exams: true, results: true, ranking: false, subjectDetails: true, answerSheets: true },
+    passwordLoginMethods: [{ id: 'app', label: '官方APP登录' }, { id: 'miniapp', label: '小程序登录' }],
     async authenticate(account, password) {
+      return this.authenticateWithMethod!(account, password, 'app');
+    },
+    async authenticateWithMethod(account, password, method) {
+      if (method !== 'app' && method !== 'miniapp') throw new ProviderError('UNSUPPORTED', '不支持该登录方式');
       if (!account.trim() || !password) throw new ProviderError('INVALID_CREDENTIALS', '请输入账号和密码');
-      const login = await request(host + 'login', {
+      const miniapp = method === 'miniapp';
+      const body = miniapp ? new URLSearchParams({ userCode: account.trim(), userPass: password,
+        openId: await septnetOpenId(account), unionid: '', token: '', version }).toString()
+        : `userCode=${encodeURIComponent(account.trim())}`
+          + `&password=${encodeURIComponent(bytesToBase64(utf8ToBytes(password + passwordSuffix)))}`;
+      const login = await request(miniapp ? publicHost + 'publicszoneui.service/XCXService/Login' : host + 'login', {
         method: 'POST',
         headers: headers(undefined, { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;' }),
-        body: `userCode=${encodeURIComponent(account.trim())}`
-          + `&password=${encodeURIComponent(bytesToBase64(utf8ToBytes(password + passwordSuffix)))}`,
+        body,
       }).catch((error: unknown) => {
         // 实测：账号/口令不对时平台返回 403（非 401），对登录而言这是凭据问题而非会话过期。
         if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') {
@@ -420,27 +450,30 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         }
         throw error;
       });
-      const data = parse(loginSchema, login.data, '登录结果');
+      const data = parse(loginSchema, miniapp ? openData(login.data) : login.data, '登录结果');
       // 登录响应下发的 WAF 会话 cookie（aliyungf_tc），此后每个请求都要回传。
       const wafCookie = /(?:^|,\s*)(aliyungf_tc=[^;,\s]+)/.exec(login.setCookie ?? '')?.[1];
       const session: AuthSession = {
         providerId, accountId: account.trim(), accessToken: data.token,
-        ...(wafCookie ? { providerContext: { wafCookie } } : {}),
+        providerContext: { ...(miniapp ? { loginMethod: 'miniapp' } : {}), ...(wafCookie ? { wafCookie } : {}) },
       };
       // 官方客户端登录后会做一次密钥协商；实测加密接口并不依赖它，失败可忽略。
       try {
-        const sealed = seal({});
-        await request(host + 'user', {
-          method: 'POST',
-          headers: headers(session, { ...sealed.headers, 'Content-Type': 'application/json; charset=UTF-8' }),
-          body: '{}',
-        });
+        if (!miniapp) {
+          const sealed = seal({});
+          await request(host + 'user', {
+            method: 'POST',
+            headers: headers(session, { ...sealed.headers, 'Content-Type': 'application/json; charset=UTF-8' }),
+            body: '{}',
+          });
+        }
       } catch { /* 协商失败不影响后续请求 */ }
       const profile = await userInfo(session);
       const schoolGuid = profile.schoolGuid;
       const grade = (profile.currentGrade ?? profile.grade ?? '').toLowerCase();
       if (!schoolGuid || !grade) throw new ProviderError('UNSUPPORTED', '该账号未绑定学校信息，请在官方 App 检查');
       session.providerContext = {
+        ...(miniapp ? { loginMethod: 'miniapp' } : {}),
         schoolGuid, grade, ...(profile.studentName ? { studentName: profile.studentName } : {}), ...(profile.ruCode ? { ruCode: profile.ruCode } : {}),
         ...(wafCookie ? { wafCookie } : {}),
       };
@@ -483,10 +516,12 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       if (!studentName) throw new ProviderError('UNSUPPORTED', '缺少学生姓名，请重新登录');
       const grade = profile?.currentGrade ?? target.grade;
       const query = new URLSearchParams({ studentName, schoolGuid: target.schoolGuid, grade });
-      const body = await request(scoreHost + `exam/getUnClaimExams?${query.toString()}`, {
+      const data = session.providerContext?.loginMethod === 'miniapp'
+        ? await publicPost(session, 'publicszoneui.service/ExamService/UnclaimExams', Object.fromEntries(query), options)
+        : openData((await request(scoreHost + `exam/getUnClaimExams?${query.toString()}`, {
         method: 'GET', headers: headers(session), signal: options?.signal,
-      });
-      const groups = parse(unclaimedPageSchema, openData(body.data), '待认领考试');
+      })).data);
+      const groups = parse(unclaimedPageSchema, data, '待认领考试');
       return groups.flatMap((group) => group.list.map((item) => ({ id: item.examGuid, name: item.examName, date: item.time, studentCodes: item.studentCodeList })));
     },
     async getClaimCandidates(session, examId, studentCodes, options?: ProviderRequestOptions): Promise<ClaimCandidate[]> {

@@ -15,7 +15,8 @@ jest.mock('../accounts-context', () => ({ useAccounts: () => ({ saveAccount: moc
 jest.mock('../storage/accounts', () => ({ accountStorage: { load: jest.fn() } }));
 jest.mock('../services/accounts', () => ({ authenticateAccount: jest.fn() }));
 jest.mock('../providers/registry', () => {
-  const providers = ['haofenshu-parent', 'other'].map((id) => ({ metadata: { id, name: id } }));
+  const providers = ['haofenshu-parent', 'other', 'septnet'].map((id) => ({ metadata: { id, name: id },
+    passwordLoginMethods: id === 'septnet' ? [{ id: 'app', label: '官方APP登录' }, { id: 'miniapp', label: '小程序登录' }] : undefined }));
   return { providerRegistry: { get: (id: string) => providers.find((provider) => provider.metadata.id === id), list: () => providers } };
 });
 jest.mock('react-native', () => ({ View: ({ children }: { children: ReactNode }) => <div>{children}</div>, useWindowDimensions: () => ({ width: 390 }) }));
@@ -54,6 +55,29 @@ function button(text: string) {
   return result;
 }
 async function click(text: string) { await act(async () => button(text).click()); }
+it.each([undefined, 'miniapp'])('编辑七天账号保留登录通道 %s，切换时复用已保存密码', async (loginMethod) => {
+  jest.mocked(accountStorage.load).mockResolvedValue({ ...saved, revision: 'r1', providerId: 'septnet', loginMethod });
+  await render();
+  expect(button('官方APP登录')).toBeDefined();
+  expect(button('小程序登录')).toBeDefined();
+  await click('登录并保存');
+  expect(authenticateAccount).toHaveBeenLastCalledWith(expect.objectContaining({ loginMethod: loginMethod ?? 'app', password: '' }));
+  await click(loginMethod === 'miniapp' ? '官方APP登录' : '小程序登录');
+  expect(input('密码')).toBeNull();
+  await click('登录并保存');
+  expect(authenticateAccount).toHaveBeenLastCalledWith(expect.objectContaining({ loginMethod: loginMethod === 'miniapp' ? 'app' : 'miniapp', password: '' }));
+});
+
+it('切换离开七天平台时隐藏并清除登录通道', async () => {
+  jest.mocked(accountStorage.load).mockResolvedValue({ ...saved, revision: 'r1', providerId: 'septnet', loginMethod: 'miniapp' });
+  await render();
+  await click('septnet');
+  await click('other');
+  expect(container.textContent).not.toContain('小程序登录');
+  await fill('密码', 'fictional-password');
+  await click('登录并保存');
+  expect(authenticateAccount).toHaveBeenLastCalledWith(expect.objectContaining({ providerId: 'other', loginMethod: undefined }));
+});
 function input(label: string) { return container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`); }
 async function fill(label: string, value: string) {
   const element = input(label);
