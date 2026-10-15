@@ -1,7 +1,8 @@
 import type { ReactElement } from 'react';
 import { QuestionScoreGroups } from '../question-score-groups';
 import type { QuestionScore, QuestionScoreSummary } from '../domain/models';
-import { isWrongQuestion } from '../services/subjects';
+import { flattenQuestions, isWrongQuestion } from '../services/subjects';
+import { zhixueQuestionAnswers, zhixueQuestions } from '../providers/zhixue-checksheet';
 
 const { renderToStaticMarkup } = jest.requireActual<{ renderToStaticMarkup: (element: ReactElement) => string }>('react-dom/server');
 
@@ -43,4 +44,29 @@ it('does not add group headings for providers without classification or summarie
   expect(html).toContain('原有小题');
   expect(html).not.toContain('客观题');
   expect(html).not.toContain('主观题');
+});
+it('renders the actual zhixue parser output as objective, subjective and unclassified groups', () => {
+  const detail = zhixueQuestions({ showSingleTopicScore: true, sheetDatas: JSON.stringify({
+    userAnswerRecordDTO: { answerRecordDetails: [
+      { topicNumber: 1, dispTitle: '虚构选择题', score: 0, standardScore: 4, answerType: 's01Text', answer: 'B' },
+      { topicNumber: 2, dispTitle: '虚构解答题', score: 2, standardScore: 6, answerType: 's02Image' },
+      { topicNumber: 3, dispTitle: '虚构未知题型', score: 1, standardScore: 1 },
+    ] },
+    answerSheetLocationDTO: { pageSheets: [{ sections: [
+      { type: 'SingleChoice', contents: { branch: [{ ixList: [1] }] } },
+      { type: 'AnswerQuestion', contents: { branch: [{ ixList: [2] }] } },
+    ] }] },
+  }) });
+  const annotated = zhixueQuestionAnswers(detail.questions, JSON.stringify({ typeTopicAnalysis: [{ topicAnalysisDTOs: [
+    { topicNumber: 1, answerType: 's01Text', standardAnswer: 'A' },
+  ] }] }));
+  const html = renderToStaticMarkup(<QuestionScoreGroups questions={flattenQuestions(annotated.questions)} />);
+  expect(html).toContain('客观题');
+  expect(html).toContain('主观题');
+  expect(html).toContain('其它题目');
+  expect(html).toContain('我的答案 B');
+  expect(html).toContain('正确答案 A');
+  expect(html.indexOf('客观题')).toBeLessThan(html.indexOf('虚构选择题'));
+  expect(html.indexOf('主观题')).toBeLessThan(html.indexOf('虚构解答题'));
+  expect(html.indexOf('其它题目')).toBeLessThan(html.indexOf('虚构未知题型'));
 });

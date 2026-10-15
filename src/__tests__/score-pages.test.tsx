@@ -10,18 +10,21 @@ import { useAppStore } from '../state/app';
 import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
 import type { GradeDisplayMode } from '../services/score-display';
+// These tests exercise score rendering, not the native academic-year control.
+jest.mock('../academic-year-picker', () => ({ AcademicYearPicker: () => null }));
 
 type Root = { render: (element: ReactNode) => void; unmount: () => void };
 const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => Root }>('react-dom/client');
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const mockPush = jest.fn();
 let mockProviderId = 'septnet';
+let mockRouteExamName: string | undefined;
 const mockSubject: SubjectDetail = { subjectId: 'fictional-subject', subject: '化学', score: 65, maxScore: 100, grade: 'B4', providerContext: { originalScore: '20', scaledScore: '65', gradePercentile: '36-43%' } };
 const mockResult: ExamResult = {
   examId: 'fictional-exam', examName: '虚构考试', totalScore: 65, originalTotalScore: 20, maxTotalScore: 200,
   subjects: [{ subject: '生物', status: 'absent' }, mockSubject, { subject: '历史', status: 'absent' }, { subject: '数学', score: 0 }],
 };
-jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useLocalSearchParams: () => ({ accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学' }) }));
+jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useLocalSearchParams: () => ({ accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学', examName: mockRouteExamName }) }));
 jest.mock('../accounts-context', () => ({ useAccounts: () => ({ accounts: [{ id: 'fictional', revision: 'r1', providerId: mockProviderId }] }) }));
 jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../services/exam-binding', () => ({ supportsExamBinding: () => false }));
@@ -72,7 +75,7 @@ jest.mock('../ui', () => ({
   Body: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Badge: ({ label }: { label: string }) => <span data-testid="badge">{label}</span>,
-  Header: () => null, ErrorCard: () => null, LoadingState: ({ label }: { label: string }) => <span>{label}</span>,
+  Header: ({ title, subtitle }: { title: string; subtitle?: string }) => <><h1>{title}</h1>{subtitle ? <span data-testid="header-subtitle">{subtitle}</span> : null}</>, ErrorCard: () => null, LoadingState: ({ label }: { label: string }) => <span>{label}</span>,
   useDoubleTap: (callback: unknown) => callback,
 }));
 jest.mock('../question-score-groups', () => ({ QuestionScoreGroups: () => null }));
@@ -84,6 +87,7 @@ let root: Root;
 beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
+  mockRouteExamName = undefined;
   useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [] });
   mockEssay = { answerSheets: [] };
   mockStatistics = [];
@@ -92,6 +96,45 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+
+it('uses the selected list name for a fallback title across rerenders and lets the only subject occupy the full row', async () => {
+  const previous = { ...mockResult };
+  mockProviderId = 'zhixue';
+  mockRouteExamName = '虚构单科考试名称';
+  Object.assign(mockResult, { examName: '考试报告', examNameIsFallback: true, totalScore: 0, maxTotalScore: 100, originalTotalScore: undefined, subjects: [{ id: 'chem', subject: '化学', score: 0, maxScore: 100 }] });
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.querySelector('h1')?.textContent).toBe(mockRouteExamName);
+    expect(container.textContent).toContain('总分0 / 100');
+    const subject = container.querySelector<HTMLButtonElement>('[aria-label="查看化学详情"]')!;
+    expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({ width: '100%' });
+    await act(async () => subject.click());
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', examName: mockRouteExamName, subjectId: 'chem', subject: '化学' } });
+    await act(async () => root.render(<Subject />));
+    expect(container.querySelector('[data-testid="header-subtitle"]')?.textContent).toBe(mockRouteExamName);
+    expect(container.textContent).not.toContain('考试报告');
+    await act(async () => root.render(<Result />));
+    expect(container.querySelector('h1')?.textContent).toBe(mockRouteExamName);
+  } finally { Object.assign(mockResult, previous); delete mockResult.examNameIsFallback; }
+});
+it('keeps a true report exam name ahead of the list name and preserves multi-subject card widths', async () => {
+  mockRouteExamName = '虚构旧列表名称';
+  await act(async () => root.render(<Result />));
+  expect(container.querySelector('h1')?.textContent).toBe('虚构考试');
+  const subject = container.querySelector<HTMLButtonElement>('[aria-label="查看化学详情"]')!;
+  expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({ width: '48%' });
+  await act(async () => root.render(<Subject />));
+  expect(container.querySelector('[data-testid="header-subtitle"]')?.textContent).toBe('虚构考试');
+});
+it('uses the safe generic title when neither a true report name nor selected list name is available', async () => {
+  const previous = mockResult.examName;
+  mockResult.examName = '考试报告';
+  mockResult.examNameIsFallback = true;
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.querySelector('h1')?.textContent).toBe('考试报告');
+  } finally { mockResult.examName = previous; delete mockResult.examNameIsFallback; }
+});
 
 it.each< [GradeDisplayMode, string | undefined] >([
   ['both', 'B4 36-43%'], ['grade', 'B4'], ['percentile', '36-43%'], ['none', undefined],
@@ -271,7 +314,7 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   }
   expect(mockPush).not.toHaveBeenCalled();
   await act(async () => cards[0].click());
-  expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学' } });
+  expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', examName: '虚构考试', subjectId: '化学', subject: '化学' } });
   expect(mockResult.subjects.map((item) => item.subject)).toEqual(originalOrder);
 });
 

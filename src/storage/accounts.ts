@@ -8,7 +8,7 @@ const indexKey = 'magicmirror.accounts.v1';
 const activeKey = 'magicmirror.active.v1';
 const key = (id: string) => `magicmirror.account.${id}`;
 const profileSchema = z.object({ id: z.string(), displayName: z.string(), schoolName: z.string().optional(), grade: z.string().optional(), providerContext: z.record(z.string(), z.string()).optional() });
-const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token']).optional(), loginMethod: z.string().optional(), password: z.string().optional(), session: sessionSchema.optional(), selectedProfile: profileSchema.optional() });
+const accountSchema = z.object({ id: z.string(), revision: z.string(), label: z.string(), providerId: z.string(), login: z.string(), authMode: z.enum(['password', 'token', 'webview']).optional(), loginMethod: z.string().optional(), password: z.string().optional(), session: sessionSchema.optional(), selectedProfile: profileSchema.optional(), academicYear: z.string().optional() });
 let queue: Promise<unknown> = Promise.resolve();
 function serialize<T>(operation: () => Promise<T>): Promise<T> {
   const result = queue.then(operation, operation);
@@ -34,6 +34,30 @@ export const accountStorage = {
   load,
   async list() { return (await Promise.all((await ids()).map(load))).filter((account): account is LocalAccount => account !== null); },
   save(account: LocalAccount) { return serialize(() => save(account)); },
+  setAcademicYear(id: string, revision: string, academicYear: string) {
+    return serialize(async () => {
+      const current = await load(id);
+      if (!current || current.revision !== revision) return false;
+      await save({ ...current, academicYear });
+      return true;
+    });
+  },
+  saveAuthenticated(account: LocalAccount, previous: LocalAccount | null, active: () => boolean) {
+    return serialize(async () => {
+      const current = await load(account.id);
+      if (!active() || (previous
+        ? !current || current.revision !== previous.revision || current.session?.accessToken !== previous.session?.accessToken || current.academicYear !== previous.academicYear
+        : current !== null)) return false;
+      try { await save(account); }
+      catch (error) {
+        // A new account is not visible until its index entry is written.
+        // Remove its orphaned credential record if that final write failed.
+        if (!previous) await deleteSecureItem(key(account.id));
+        throw error;
+      }
+      return true;
+    });
+  },
   updateSession(id: string, revision: string, session: LocalAccount['session'], expectedToken?: string) {
     return serialize(async () => {
       const current = await load(id);

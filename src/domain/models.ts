@@ -2,6 +2,7 @@ import { z } from 'zod';
 export const capabilitiesSchema = z.object({ profile: z.boolean(), exams: z.boolean(), results: z.boolean(), ranking: z.boolean(), subjectDetails: z.boolean().optional(), questionScores: z.boolean().optional(), answerSheets: z.boolean().optional() });
 export type ProviderCapabilities = z.infer<typeof capabilitiesSchema>;
 export interface StudentProfile { id: string; displayName: string; schoolName?: string; grade?: string; selected?: boolean; providerContext?: Record<string, string>; }
+export interface AcademicYear { id: string; label: string; }
 export interface ExamSummary { isUnion?: boolean; id: string; name: string; date?: string; /** 考试性质（如「周测」「月考」），平台未给出时由 Provider 兜底为「其它」。 */ category?: string; subjectCount?: number; hasResult?: boolean; availability?: 'unavailable'; }
 export interface UnclaimedExam { id: string; name: string; date?: string; studentCodes: string[]; }
 export interface ClaimCandidate { studentCode: string; url?: string; }
@@ -14,7 +15,7 @@ export interface Ranking { rank: number; total?: number; /** 区间排名的上�
 export interface DefeatRate { scope: 'class' | 'grade'; value: number; }
 /** Provider 解释的页面级提示：显示在详情页顶部，用户可关闭，关闭状态按 id 记忆。 */
 export interface ProviderNotice { id: string; text: string; }
-export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; /** 页面级提示（如联考等第口径说明）。 */ notice?: ProviderNotice; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
+export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; /** True when the Provider only supplied a generic display name. */ examNameIsFallback?: boolean; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; /** 页面级提示（如联考等第口径说明）。 */ notice?: ProviderNotice; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
 export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; }
 /** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
 export interface EssayDetail { prompt?: string; answerSheets: AnswerSheet[]; }
@@ -27,7 +28,7 @@ export interface DistributionGroup { id: string; title: string; layout: 'options
 export interface QuestionScore { id: string; label: string; score?: number; maxScore?: number; children?: QuestionScore[]; providerContext?: Record<string, string>; /** 题目类型：objective=客观题（带作答与正确答案），subjective=主观题。平台未区分时缺省。 */ kind?: 'objective' | 'subjective'; /** 我的作答（客观题）。 */ myAnswer?: string; /** 正确答案（客观题）。 */ answer?: string; }
 export interface QuestionScoreSummary { kind: 'objective' | 'subjective'; score: number; maxScore: number; inferred?: boolean; }
 export interface SubjectDetail { subjectId: string; subject: string; score?: number; maxScore?: number; grade?: string; defeatRates?: DefeatRate[]; providerContext?: Record<string, string>; statistics?: SubjectStatistic[]; chapterAnalysis?: SubjectAnalysisItem[]; abilityAnalysis?: SubjectAnalysisItem[]; abilityScoreAnalysis?: SubjectAnalysisItem[]; questions?: QuestionScore[]; questionScoreSummaries?: QuestionScoreSummary[]; answerSheets?: AnswerSheet[]; reportSections?: ReportSection[]; questionNotice?: string; }
-export interface LocalAccount { id: string; revision: string; label: string; providerId: string; login: string; authMode?: 'password' | 'token'; loginMethod?: string; password?: string; session?: AuthSession; selectedProfile?: StudentProfile; }
+export interface LocalAccount { id: string; revision: string; label: string; providerId: string; login: string; authMode?: 'password' | 'token' | 'webview'; loginMethod?: string; password?: string; session?: AuthSession; selectedProfile?: StudentProfile; academicYear?: string; }
 export interface AuthSession { providerId: string; accountId: string; accessToken: string; expiresAt?: number; providerContext?: Record<string, string>; }
 export type ProviderErrorCode = 'INVALID_CREDENTIALS' | 'SESSION_EXPIRED' | 'NETWORK' | 'NOT_FOUND' | 'UNSUPPORTED' | 'RESTRICTED' | 'UNKNOWN';
 export class ProviderError extends Error { constructor(public readonly code: ProviderErrorCode, message: string, public readonly retryable = false) { super(message); this.name = 'ProviderError'; } }
