@@ -155,7 +155,7 @@ describe('Haofenshu Provider (no network)', () => {
   it.each([403, 429, 451])('does not retry HTTP %s', async (status) => {
     const { provider, transport } = setup([], status);
     await expect(provider.getProfile(session)).rejects.toMatchObject({ code: 'UNSUPPORTED', retryable: false });
-    expect(transport.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(transport).toHaveBeenCalledTimes(1);
   });
   it('only treats risk messages as restricted, not a plain empty archive response', async () => {
     const { provider } = setup([{ code: 1, data: null }, { code: 1, data: null }]);

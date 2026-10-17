@@ -95,11 +95,15 @@ describe('Ruiya Provider', () => {
       if (String(url).includes('/report/singleGroup/')) return response(report);
       return response(reportList);
     });
-    // The shared factory uses the same options; inspect the configured login request with a test transport.
-    const configured = createRuiyaProvider(transport, { host: 'https://www.bfzks.com', providerId: 'bfzks', platformLabel: '百分智', system: '1' });
-    await configured.authenticate('fictional', 'fictional-password');
-    expect(String((transport.mock.calls[1][1] as RequestInit).body)).toContain('hndSystem=1');
-    expect(bfzksProvider.metadata.id).toBe('bfzks');
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation(transport);
+    try {
+      const auth = await bfzksProvider.authenticate('fictional', 'fictional-password');
+      expect(auth.providerId).toBe('bfzks');
+      const [url, init] = transport.mock.calls[1];
+      expect(String(url)).toBe('https://www.bfzks.com/');
+      expect(init).toMatchObject({ method: 'POST', credentials: 'include' });
+      expect(new URLSearchParams(String(init?.body)).get('hndSystem')).toBe('1');
+    } finally { fetchSpy.mockRestore(); }
   });
 
   it('takes the 百分智 session host from the runtime-followed login redirect', async () => {

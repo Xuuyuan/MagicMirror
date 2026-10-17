@@ -297,8 +297,8 @@ it('omits the grading-rule notice from trend notes', () => {
   expect(sections[0].notes).toEqual([]);
 });
 
-it('hides empty successes and unavailable reports, but preserves knowledge summary text', async () => {
-  expect(await zhixueReportSections(async (path) => path.endsWith('/getLevelTrend') ? { list: [] } : { list: [] }, context)).toEqual([]);
+it('hides empty successes and unavailable reports', async () => {
+  expect(await zhixueReportSections(async () => ({ list: [] }), context)).toEqual([]);
   expect(await zhixueReportSections(async () => '', context)).toEqual([]);
   const request = async (path: string) => {
     if (path.endsWith('/getLevelTrend')) throw new ProviderError('NOT_FOUND', 'fictional absence');

@@ -26,7 +26,11 @@ jest.mock('expo-file-system', () => {
   return { Directory, File, Paths: { cache: { uri: 'file:///cache' } }, files, downloads, failures };
 });
 
-jest.mock('expo-crypto', () => ({ CryptoDigestAlgorithm: { SHA256: 'SHA-256' }, digestStringAsync: async (_algorithm: string, value: string) => Array.from(value, (char) => char.charCodeAt(0).toString(16).padStart(2, '0')).join('').slice(0, 16) }));
+jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digestStringAsync: async (_algorithm: string, value: string) =>
+    jest.requireActual<{ createHash: (algorithm: string) => { update: (input: string) => { digest: (format: string) => string } } }>('node:crypto').createHash('sha256').update(value).digest('hex'),
+}));
 
 const fileSystem = jest.requireMock('expo-file-system') as { files: Map<string, string>; downloads: string[]; failures: Set<string> };
 
@@ -38,13 +42,20 @@ describe('答题卡图片缓存', () => {
     expect(fileSystem.downloads).toEqual([]);
   });
 
-  it('按请求头下载到缓存目录并复用已缓存文件', async () => {
+  it('复用同一图片的缓存，不同图片使用独立缓存文件', async () => {
     const url = 'https://example.test/secure/paper.png';
     const headers = { Cookie: 'ASP.NET_SessionId=fictional', Referer: 'https://example.test/report/singleGroup/REPORT123' };
     const first = await fetchSheetImage(url, headers);
-    expect(first).toMatch(/^file:\/\/\/cache\/answer-sheets\/[0-9a-f]{16}\.png$/);
+    expect(fileSystem.files.has(first)).toBe(true);
     await expect(fetchSheetImage(url, headers)).resolves.toBe(first);
     expect(fileSystem.downloads).toEqual([url]);
+    const otherUrl = 'https://example.test/secure/other-paper.png';
+    const other = await fetchSheetImage(otherUrl, headers);
+    expect(other).not.toBe(first);
+    expect(fileSystem.files.has(other)).toBe(true);
+    await expect(fetchSheetImage(otherUrl, headers)).resolves.toBe(other);
+    await expect(fetchSheetImage(url, headers)).resolves.toBe(first);
+    expect(fileSystem.downloads).toEqual([url, otherUrl]);
   });
 
   it('强制刷新时不会复用旧缓存', async () => {

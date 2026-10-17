@@ -360,7 +360,6 @@ describe('Septnet Provider（无网络）', () => {
     ]);
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     const card = calls.find(([url]) => url.includes('AnswerCardUrl'))!;
-    expect(card[0]).toContain('AnswerCardUrl');
     // 请求参数经 GCM 加密进 bp，因此只断言头与调用次数：总分/不可用科目不应发起请求
     expect(calls.filter(([url]) => url.includes('AnswerCardUrl'))).toHaveLength(1);
     expect((card[1].headers as Record<string, string>).bk).toHaveLength(172);
@@ -371,14 +370,18 @@ describe('Septnet Provider（无网络）', () => {
       providerContext: { schoolGuid: 'SCHOOL-GUID-0001', grade: 'a10', ruCode: 'FICTIONAL-RU-CODE' } };
     const { provider, transport } = setup([
       sealed(subjects),
-      // 响应回显 isWatermark=false：水印标记只能来自请求参数，传错或不传就会失败。
+      // 服务端未回显水印标记时，本地仍按水印请求标记返回图片。
       sealed({ answerUrls: ['https://static.example.invalid/fictional/answer-marked-1.png'], isWatermark: false }),
     ]);
     expect(await provider.getWatermarkedAnswerSheets!(session, 'EXAM-0001-AAAA', '语文')).toEqual([
       { subject: '语文', url: 'https://static.example.invalid/fictional/answer-marked-1.png', watermarked: true },
     ]);
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
-    expect(calls.filter(([url]) => url.includes('AnswerCardUrl'))).toHaveLength(1);
+    const cards = calls.filter(([url]) => url.includes('AnswerCardUrl'));
+    expect(cards).toHaveLength(1);
+    const headers = cards[0][1].headers as Record<string, string>;
+    const params = bytesToUtf8(gcm(sessionKey, base64ToBytes(headers.bn)).decrypt(base64ToBytes(headers.bp)));
+    expect(params.split(';')).toContain('isWatermark=true');
   });
 
   it('authView >= 1 的考试按要求拒绝并提示官方 App', async () => {
