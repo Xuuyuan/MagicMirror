@@ -38,6 +38,8 @@ export interface ScoreProvider { readonly metadata: ScoreProviderMetadata; reado
   getSubjectStatistics?(session: AuthSession, examId: string, subjectId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<SubjectStatistic[]>;
   /** 按需获取本人主观题作答切图；不批量预取短期链接。 */
   getQuestionAnswerSheet?(session: AuthSession, examId: string, subjectId: string, questionId: string, options?: ProviderRequestOptions): Promise<AnswerSheet>;
+  /** 本人一道题的全部作答区域，按阅读顺序返回；旧单图能力继续兼容。 */
+  getQuestionAnswerSheets?(session: AuthSession, examId: string, subjectId: string, questionId: string, cachedResult?: ExamResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]>;
   refreshSession?(session: AuthSession): Promise<AuthSession>;
   /** 首项为旧账号与新增账号的默认密码登录通道。 */
   readonly passwordLoginMethods?: readonly PasswordLoginMethod[];

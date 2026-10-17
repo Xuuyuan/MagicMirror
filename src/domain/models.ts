@@ -16,13 +16,16 @@ export interface DefeatRate { scope: 'class' | 'grade'; value: number; }
 /** Provider 解释的页面级提示：显示在详情页顶部，用户可关闭，关闭状态按 id 记忆。 */
 export interface ProviderNotice { id: string; text: string; }
 export interface ExamResult { isUnion?: boolean; grade?: string; gradePercentile?: string; defeatRates?: DefeatRate[]; examId: string; examName: string; /** True when the Provider only supplied a generic display name. */ examNameIsFallback?: boolean; subjects: SubjectScore[]; totalScore?: number; originalTotalScore?: number; maxTotalScore?: number; /** 与原始总分同口径的卷面满分。 */ originalMaxTotalScore?: number; /** 参加该场考试的考生人数。 */ participantCount?: number; statistics?: SubjectStatistic[]; /** 页面级提示（如联考等第口径说明）。 */ notice?: ProviderNotice; ranking?: Ranking; rankings?: Ranking[]; publishedAt?: string; reportSections?: ReportSection[]; }
-export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; }
+/** 原图上的归一化区域；sourceAspectRatio 用于拒绝方向或模板不匹配的图片。 */
+export interface ImageRegion { x: number; y: number; width: number; height: number; sourceAspectRatio?: number; }
+export interface AnswerSheet { subject: string; subjectId?: string; url: string; watermarked: boolean; headers?: Record<string, string>; region?: ImageRegion; }
 /** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
 export interface EssayDetail { prompt?: string; answerSheets: AnswerSheet[]; }
 export interface SubjectStatistic { scope: string; averageScore?: number; participantCount?: number; rank?: number; /** 区间排名上界：与 rank 组成名次范围（如 164~211）。 */ rankMax?: number; /** 估算值：界面在标签上加「（预估）」，表示不是平台下发的精确名次。 */ estimate?: boolean; }
 export interface SubjectAnalysisItem { label: string; values: Record<string, string>; scoreBreakdown?: { score?: number; maxScore?: number; grade?: string; benchmarks: { label: string; score: number }[] }; }
 /** Provider 已解释字段含义；UI 只负责展示，不识别平台字段。 */
-export interface ReportSection { id: string; title: string; /** 分区归属：界面把同一分区的报告卡片并入该功能卡片展示（当前仅 `essay`）；缺省时作为独立报告卡片。 */ placement?: 'essay'; items?: SubjectAnalysisItem[]; distributions?: DistributionGroup[]; notes?: string[]; /** 说明随明细一起展开收起。 */ collapseNotes?: boolean; highlightColumns?: 3; highlights?: { label: string; value: string; unit?: string }[]; comparisonMetric?: '得分率' | '超过比例'; comparisons?: { label: string; series: { label: string; percent: number }[] }[]; }
+export interface RadarReport { axes: string[]; series: { label: string; values: (number | null)[] }[]; }
+export interface ReportSection { id: string; title: string; /** 分区归属：界面把同一分区的报告卡片并入该功能卡片展示（当前仅 `essay`）；缺省时作为独立报告卡片。 */ placement?: 'essay'; items?: SubjectAnalysisItem[]; itemGroups?: { label: string; columns: { key: string; label: string }[] }[]; distributions?: DistributionGroup[]; radar?: RadarReport; notes?: string[]; notesPosition?: 'bottom'; /** 说明随明细一起展开收起。 */ collapseNotes?: boolean; highlightColumns?: 2 | 3; highlightRows?: number[]; highlights?: { label: string; value: string; unit?: string }[]; comparisonMetric?: '得分率' | '超过比例'; comparisons?: { label: string; series: { label: string; percent: number }[] }[]; }
 /** percent 使用 0–100 刻度；无法解释的原值只显示 value，不绘制条形。 */
 export interface DistributionGroup { id: string; title: string; layout: 'options' | 'bars'; questions: { label: string; bins: { label: string; value: string; percent?: number }[] }[]; }
 export interface QuestionScore { id: string; label: string; score?: number; maxScore?: number; children?: QuestionScore[]; providerContext?: Record<string, string>; /** 题目类型：objective=客观题（带作答与正确答案），subjective=主观题。平台未区分时缺省。 */ kind?: 'objective' | 'subjective'; /** 我的作答（客观题）。 */ myAnswer?: string; /** 正确答案（客观题）。 */ answer?: string; }

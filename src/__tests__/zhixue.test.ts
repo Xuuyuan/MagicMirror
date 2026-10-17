@@ -110,6 +110,72 @@ async function sheetSetup(handler?: Handler) {
   });
   return { ...fixture, encoded, cached: await fixture.provider.getExamResult(session, encoded) };
 }
+const multiRegionFixture = { ...sheetFixture, sheetDatas: JSON.stringify({
+  userAnswerRecordDTO: { answerRecordDetails: [{ topicNumber: 1, dispTitle: '作文', score: 12, standardScore: 20, answerType: 's02Image' }] },
+  answerSheetLocationDTO: { comeFrom: 0, paperType: 'A3', pageSheets: [{ pageIndex: 1, sections: [{ type: 'AnswerQuestion',
+    contents: { branch: [20, 140, 260].map((left) => ({ ixList: [1], position: { left, top: 30, width: 100, height: 220 } })) },
+  }] }] },
+}) };
+it('loads every essay region through the web session and uses cached subject membership', async () => {
+  const { provider, transport, encoded, cached } = await sheetSetup((url) => url.pathname.endsWith('/checksheet/') ? { errorCode: 0, result: multiRegionFixture } : undefined);
+  const detail = await provider.getSubjectDetail!(session, encoded, 'paper', cached);
+  expect(detail.questions?.[0].providerContext?.answerImageAvailable).toBe('true');
+  const signal = new AbortController().signal;
+  const sheets = await provider.getQuestionAnswerSheets!(session, encoded, 'paper', '1', cached, { signal });
+  expect(sheets).toHaveLength(3);
+  expect(sheets.every((sheet) => sheet.url === 'https://fictional-storage.example/page-2.png' && !sheet.headers)).toBe(true);
+  expect(sheets.map((sheet) => sheet.region!.x)).toEqual([20 / 420, 140 / 420, 260 / 420]);
+  expect(transport.mock.calls.filter(([url]) => String(url).includes('/getReportMain'))).toHaveLength(1);
+  await expect(provider.getQuestionAnswerSheets!(session, encoded, 'other-paper', '1', cached)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  await expect(provider.getQuestionAnswerSheets!(session, encoded, 'paper', 'missing', cached)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+});
+it('does not expose question regions when the current student changes during checksheet retrieval', async () => {
+  let changed = false;
+  const { provider, encoded, cached } = await sheetSetup((url) => {
+    if (url.pathname.endsWith('/checksheet/')) { changed = true; return { errorCode: 0, result: multiRegionFixture }; }
+    if (changed && url.pathname.endsWith('/getUserInfo')) return { errorCode: 0, result: { ...user, curChildId: 'other-student' } };
+  });
+  await expect(provider.getQuestionAnswerSheets!(session, encoded, 'paper', '1', cached)).rejects.toMatchObject({ code: 'RESTRICTED' });
+});
+it('adds report sections through the same authenticated transport without reading module configuration', async () => {
+  const { provider, transport, encoded, cached } = await sheetSetup((url) => {
+    if (url.pathname.endsWith('/getLevelTrend')) return { errorCode: 0, result: { list: [{ tag: { code: 'clazz' }, dataList: [{ name: '虚构考试', level: 'B等', statTotalNum: 12 }] }] } };
+    if (url.pathname.endsWith('/getSubjectDiagnosis')) return { errorCode: 0, result: { tips: '虚构学科建议', list: [] } };
+    if (url.pathname.endsWith('/getExamPointsAndScoringAbility')) return { errorCode: 0, result: { tip: '虚构知识点建议', dataList: [] } };
+  });
+  expect(cached.reportSections?.map((section) => section.id)).toEqual(['zhixue-trend', 'zhixue-subject-diagnosis']);
+  const detail = await provider.getSubjectDetail!(session, encoded, 'paper', cached);
+  expect(detail.questions).toHaveLength(1);
+  expect(detail.reportSections?.map((section) => section.id)).toEqual(['zhixue-trend', 'zhixue-knowledge']);
+  const [input, init] = transport.mock.calls.find(([url]) => String(url).includes('/paper/getLevelTrend'))!;
+  const url = new URL(String(input));
+  expect(Object.fromEntries(url.searchParams)).toEqual({ examId: 'fictional-exam-1', paperId: 'paper', pageIndex: '1', pageSize: '5', startSchoolYear: years[1].beginTime, endSchoolYear: years[1].endTime });
+  expect(new Headers(init!.headers).get('XToken')).toBe(token);
+  expect(String(input)).not.toContain(token);
+  expect(transport.mock.calls.some(([url]) => String(url).includes('getModules'))).toBe(false);
+});
+it('preserves subject reports when school checksheet access is closed', async () => {
+  const { provider, encoded, cached } = await sheetSetup((url) => {
+    if (url.pathname.endsWith('/checksheet/')) return { errorCode: 40219 };
+    if (url.pathname.endsWith('/getLevelTrend')) return { errorCode: 1111 };
+    if (url.pathname.endsWith('/getSubjectDiagnosis')) return { errorCode: 40217 };
+    if (url.pathname.endsWith('/getExamPointsAndScoringAbility')) return { errorCode: 0, result: { tip: '虚构知识点说明', dataList: [] } };
+  });
+  const detail = await provider.getSubjectDetail!(session, encoded, 'paper', cached);
+  expect(detail).toMatchObject({ score: 80, questions: [], questionNotice: expect.any(String) });
+  expect(detail.reportSections).toHaveLength(1);
+  expect(detail.reportSections![0].notes).toContain('虚构知识点说明');
+});
+it('does not return report sections if the current student changes during an optional request', async () => {
+  let changed = false;
+  const { provider } = setup((url) => {
+    if (url.pathname.endsWith('/getUserInfo')) return { errorCode: 0, result: changed ? { ...user, curChildId: 'other-student' } : user };
+    if (url.pathname.endsWith('/getReportMain')) return { errorCode: 0, result: { paperList: [] } };
+    if (url.pathname.endsWith('/getLevelTrend')) { changed = true; return { errorCode: 0, result: { list: [] } }; }
+    if (url.pathname.endsWith('/getSubjectDiagnosis')) return { errorCode: 0, result: { tips: '虚构受保护说明', list: [] } };
+  });
+  await expect(provider.getExamResult(session, await examId())).rejects.toMatchObject({ code: 'RESTRICTED' });
+});
 it('loads historical question scores and all answer-sheet pages through the official exam route', async () => {
   const { provider, transport, encoded, cached } = await sheetSetup((url) => url.pathname.endsWith('/getHostByBusinessId') ? { code: 200, data: { host: 'https://ali-bg.zhixue.com/' } } : undefined);
   expect(provider.capabilities).toMatchObject({ subjectDetails: true, questionScores: true, answerSheets: true });

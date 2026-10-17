@@ -6,6 +6,7 @@ import Subject from '../../app/subject';
 import { QuestionImagePreview } from '../question-image-preview';
 import type { AnswerSheet, ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
+import { zhixueDiagnosisSection, zhixueKnowledgeSection, zhixueTrendSections } from '../providers/zhixue-report';
 import { useAppStore } from '../state/app';
 import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
@@ -81,6 +82,14 @@ jest.mock('../ui', () => ({
 jest.mock('../question-score-groups', () => ({ QuestionScoreGroups: () => null }));
 jest.mock('../sheet-image', () => ({ AdaptiveSheetImage: () => null, SheetViewerModal: () => null }));
 jest.mock('../sheet-actions', () => ({ SheetActionsSheet: () => null }));
+jest.mock('react-native-svg', () => ({
+  __esModule: true,
+  default: ({ children, accessibilityLabel }: { children: ReactNode; accessibilityLabel?: string }) => <svg aria-label={accessibilityLabel}>{children}</svg>,
+  G: ({ children }: { children: ReactNode }) => <g>{children}</g>,
+  Circle: ({ accessibilityLabel }: { accessibilityLabel?: string }) => <circle aria-label={accessibilityLabel} />,
+  Line: () => <line />, Polygon: ({ points }: { points: string }) => <polygon points={points} />,
+  Text: ({ children }: { children: ReactNode }) => <text>{children}</text>,
+}));
 
 let container: HTMLDivElement;
 let root: Root;
@@ -96,6 +105,80 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+
+it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summaries in the existing pages', async () => {
+  const resultSections = mockResult.reportSections;
+  const subjectSections = mockSubject.reportSections;
+  mockProviderId = 'zhixue';
+  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'A等', lowBound: 0, upperBound: 15 }, { name: 'B等', lowBound: 15, upperBound: 30 }] };
+  const trendSections = zhixueTrendSections({ scoreLevelType: 'number', list: [{ tag: { code: 'clazz' }, title: '虚构趋势建议', dataList: [
+    { id: 'fictional-exam', name: '虚构历史考试', dateDisp: '01.02', level: 'B等', statTotalNum: 15, totalNum: 16 },
+  ] }, { tag: { code: 'grade' }, title: '虚构年级趋势建议', dataList: [
+    { id: 'fictional-exam', name: '虚构历史考试', dateDisp: '01.02', level: 'A等', statTotalNum: 100 },
+  ] }] }, { clazz: rule, grade: rule }, 'fictional-exam');
+  mockResult.reportSections = [...trendSections, zhixueDiagnosisSection({ tips: '虚构学科诊断建议', list: [
+    { subjectName: '虚构诊断学科', myRank: 20, rationalRank: 40, avgRank: 50, showGradeSecondary: false, tag: { name: '虚构学科评价' } },
+    { subjectName: '虚构诊断乙', myRank: 30, rationalRank: 45, avgRank: 50, showGradeSecondary: false },
+    { subjectName: '虚构诊断丙', myRank: 40, rationalRank: 55, avgRank: 50, showGradeSecondary: false },
+  ] })];
+  mockSubject.reportSections = [...trendSections, zhixueKnowledgeSection({ tip: '虚构知识掌握建议', dataList: [] })];
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('班级人数15人');
+    expect(container.textContent).toContain('年级人数100人');
+    expect(container.textContent).toContain('班级排名（预估）3~4');
+    expect(container.textContent).toContain('学校排名（预估）1~15');
+    for (const label of ['班级排名（预估）', '学校排名（预估）']) {
+      const caption = [...container.querySelectorAll('span')].find((node) => node.textContent === label)!;
+      expect(caption.getAttribute('data-lines')).toBe('1');
+      expect(caption.getAttribute('data-fit')).toBe('true');
+    }
+    expect(container.textContent).not.toContain('【班级】虚构趋势建议');
+    expect(container.textContent).not.toContain('【学校】虚构学校趋势建议');
+    expect(container.textContent).not.toContain('虚构学科诊断建议');
+    expect(container.textContent).not.toContain('虚构历史考试');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click());
+    expect(container.textContent).toContain('【班级】虚构趋势建议');
+    expect(container.textContent).toContain('【学校】虚构学校趋势建议');
+    expect(container.textContent).toContain('虚构历史考试');
+    expect(container.textContent!.match(/虚构历史考试/g)).toHaveLength(1);
+    const classRow = container.querySelector('[aria-label="01.02 · 虚构历史考试 班级"]')!;
+    const gradeRow = container.querySelector('[aria-label="01.02 · 虚构历史考试 学校"]')!;
+    expect(classRow.textContent).toBe('班级等第B等变化—人数15');
+    expect(gradeRow.textContent).toBe('学校等第A等变化—人数100');
+    for (const row of [classRow, gradeRow]) {
+      expect(JSON.parse(row.getAttribute('data-style')!).flexDirection).toBe('row');
+      expect([...row.children].slice(1).map((cell) => JSON.parse(cell.getAttribute('data-style')!).flex)).toEqual([1, 1, 1]);
+    }
+    expect(container.textContent).toContain('人数15');
+    expect(container.textContent).not.toContain('总人数16');
+    expect(container.querySelector('[aria-label="学科水平雷达图，刻度0至100"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="虚构诊断学科 本次水平80 / 100"]')).not.toBeNull();
+    const polygons = container.querySelectorAll('polygon');
+    expect(polygons).toHaveLength(9);
+    for (const polygon of polygons) {
+      expect(polygon.getAttribute('points')!.split(' ')).toHaveLength(3);
+      expect(polygon.getAttribute('points')).not.toMatch(/NaN|undefined/);
+    }
+    const radar = container.querySelector('svg')!;
+    expect([...radar.querySelectorAll('text')].map((node) => node.textContent)).toEqual(['虚构诊断学科', '虚构诊断乙', '虚构诊断丙']);
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开发挥水平学科诊断"]')!.click());
+    expect(container.textContent).toContain('虚构学科诊断建议');
+    expect(container.textContent).not.toContain('虚构学科评价');
+    const advice = [...container.querySelectorAll('span')].find((node) => node.textContent === '虚构学科诊断建议')!;
+    expect(radar.compareDocumentPosition(advice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起发挥水平学科诊断"]')!.click());
+    expect(container.textContent).not.toContain('虚构学科诊断建议');
+    expect(container.querySelector('svg')).not.toBeNull();
+    expect(container.textContent).not.toContain('击败率80');
+    await act(async () => root.render(<Subject />));
+    expect(container.textContent).toContain('虚构知识掌握建议');
+    expect(container.textContent).not.toContain('平台暂未提供知识点明细。');
+  } finally {
+    mockResult.reportSections = resultSections;
+    mockSubject.reportSections = subjectSections;
+  }
+});
 
 it('uses the selected list name for a fallback title across rerenders and lets the only subject occupy the full row', async () => {
   const previous = { ...mockResult };
@@ -116,6 +199,28 @@ it('uses the selected list name for a fallback title across rerenders and lets t
     await act(async () => root.render(<Result />));
     expect(container.querySelector('h1')?.textContent).toBe(mockRouteExamName);
   } finally { Object.assign(mockResult, previous); delete mockResult.examNameIsFallback; }
+});
+
+it('hides score-based estimates and keeps partially confirmed scopes in separate rows', async () => {
+  const previous = mockResult.reportSections;
+  const trend = { list: ['clazz', 'grade'].map((code) => ({ tag: { code }, dataList: [{ id: 'fictional-exam', level: 'B等', statTotalNum: 701 }] })) };
+  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'B等', lowBound: 15, upperBound: 30 }] };
+  try {
+    mockResult.reportSections = zhixueTrendSections({ ...trend, scoreLevelType: 'score' }, { clazz: rule, grade: rule }, 'fictional-exam');
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).not.toContain('排名（预估）');
+    expect(container.textContent).toContain('学校等第B等');
+    mockResult.reportSections = zhixueTrendSections({ ...trend, scoreLevelType: 'number' }, { grade: rule }, 'fictional-exam');
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).not.toContain('班级排名（预估）');
+    expect(container.textContent).toContain('学校排名（预估）106~210');
+    const labels = [...container.querySelectorAll('span')];
+    const classMetric = labels.find((node) => node.textContent === '班级等第')!.parentElement!;
+    const schoolMetric = labels.find((node) => node.textContent === '学校等第')!.parentElement!;
+    expect(classMetric.parentElement).not.toBe(schoolMetric.parentElement);
+    expect(JSON.parse(classMetric.getAttribute('data-style')!)[1].width).toBe('48%');
+    expect(JSON.parse(schoolMetric.getAttribute('data-style')!)[1].width).toBe('31%');
+  } finally { mockResult.reportSections = previous; }
 });
 it('keeps a true report exam name ahead of the list name and preserves multi-subject card widths', async () => {
   mockRouteExamName = '虚构旧列表名称';

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Platform } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Button } from 'react-native-paper';
 import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
-import { diagnosticSnapshot } from './services/diagnostics';
+import { clearDiagnostics, diagnosticSnapshot } from './services/diagnostics';
 import { useAppStore } from './state/app';
 
 const diagnosticBuild = '20261004-clean-1';
@@ -18,5 +18,8 @@ export function DiagnosticButton() {
     } catch { setCopied(false); }
   }
   if (!debugMode) return null;
-  return <Button icon="content-copy" onPress={() => void copy()}>{copied ? '已复制调试信息' : '复制调试信息'}</Button>;
+  return <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+    <Button icon="content-copy" onPress={() => void copy()}>{copied ? '已复制调试信息' : '复制调试信息'}</Button>
+    <Button icon="delete-outline" onPress={() => { clearDiagnostics(); setCopied(false); }}>清除调试信息</Button>
+  </View>;
 }

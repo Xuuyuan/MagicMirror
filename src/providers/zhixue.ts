@@ -4,7 +4,8 @@ import { ProviderError, type AuthSession, type ExamResult, type SubjectScore } f
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
 import { base64ToBytes, bytesToBase64, bytesToUtf8, numericScore, parseValidated, utf8ToBytes } from './codec';
 import { zhixueLoginScript } from './zhixue-login';
-import { zhixueQuestionAnswers, zhixueQuestions, zhixueSheets } from './zhixue-checksheet';
+import { zhixueQuestionAnswers, zhixueQuestionSheets, zhixueQuestions, zhixueSheets } from './zhixue-checksheet';
+import { zhixueReportSections } from './zhixue-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 
 const id = 'zhixue';
@@ -87,6 +88,7 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     }
     const body = parse(envelopeSchema, raw, '响应');
     if (body.errorCode === 3001) throw new ProviderError('SESSION_EXPIRED', '智学网登录已失效，请重新官方网页登录');
+    if (body.errorCode === 1111) throw new ProviderError('RESTRICTED', '智学网暂未开放此报告');
     if (body.errorCode === 9801) {
       const calibration = z.array(z.object({ systime: z.union([z.string().regex(/^\d+$/), z.number().finite()]) })).nonempty().safeParse(body.result);
       if (!retried && calibration.success && Math.abs(Date.now() - Number(calibration.data[0].systime)) <= 86400000) {
@@ -153,6 +155,16 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     await verify(session, options);
     throwIfAborted(options?.signal);
     return raw;
+  }
+  async function reports(session: AuthSession, exam: z.infer<typeof examContextSchema>, options?: ProviderRequestOptions, host?: string, subject?: SubjectScore) {
+    let route: Promise<string> | undefined;
+    return zhixueReportSections(async (path, params) => {
+      if (path === '/zhixuebao/report/common/rulesAndCopywriter') return request(www, path, session.accessToken, params, options);
+      const origin = host ?? await (route ??= examHost(session, exam.examId, options));
+      return request(origin, path, session.accessToken, params, options);
+    }, { examId: exam.examId, start: exam.start, end: exam.end,
+      ...(subject ? { paperId: subject.id, subjectCode: subject.providerContext?.subjectCode } : {}),
+    }, options?.signal);
   }
   const provider: ScoreProvider = {
     metadata: { id, name: '智学网', description: '官方网页登录，支持当前学生与历史学年成绩', officialDomain: www },
@@ -223,11 +235,12 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
       const exam = decodeExam(examId, data.studentId);
       const host = await examHost(session, exam.examId, options);
       const main = parse(resultSchema, await request(host, '/zhixuebao/report/exam/getReportMain', session.accessToken, { examId: exam.examId }, options), '主报告');
-      await verify(session, options);
       const subjects: SubjectScore[] = main.paperList.map((paper) => ({
         id: paper.paperId, subject: paper.subjectName, score: number(paper.userScore), maxScore: maxScore(paper), grade: paper.userLevel || undefined,
-        ...(paper.hasAssignScore && number(paper.preAssignScore) !== undefined && number(paper.userScore) !== undefined
-          ? { providerContext: { originalScore: String(number(paper.preAssignScore)), scaledScore: String(number(paper.userScore)) } } : {}),
+        ...(paper.subjectCode || (paper.hasAssignScore && number(paper.preAssignScore) !== undefined && number(paper.userScore) !== undefined)
+          ? { providerContext: { ...(paper.subjectCode ? { subjectCode: paper.subjectCode } : {}),
+            ...(paper.hasAssignScore && number(paper.preAssignScore) !== undefined && number(paper.userScore) !== undefined
+              ? { originalScore: String(number(paper.preAssignScore)), scaledScore: String(number(paper.userScore)) } : {}) } } : {}),
       }));
       // A single paper is the whole exam; use its score in the same summary UI.
       // Keep an explicit official total authoritative and never sum multiple papers.
@@ -240,20 +253,28 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         result.grade = total.userLevel || undefined;
         if (total.hasAssignScore) { result.originalTotalScore = number(total.preAssignScore); result.originalMaxTotalScore = number(total.standardScore); }
       }
+      result.reportSections = await reports(session, exam, options, host);
+      await verify(session, options);
+      throwIfAborted(options?.signal);
       return result;
     },
     async getSubjectDetail(session, examId, subjectId, cachedResult, options) {
       const { exam, subject } = await sheetSubject(session, examId, subjectId, cachedResult, options);
       const detail = { subjectId, subject: subject.subject, score: subject.score, maxScore: subject.maxScore, grade: subject.grade, providerContext: subject.providerContext };
+      const complete = async (parsed: ReturnType<typeof zhixueQuestions>) => {
+        const reportSections = await reports(session, exam, options, undefined, subject);
+        await verify(session, options);
+        throwIfAborted(options?.signal);
+        return { ...detail, ...parsed, reportSections };
+      };
       let parsed: ReturnType<typeof zhixueQuestions>;
       try {
         parsed = zhixueQuestions(await checksheet(session, exam, subjectId, options));
       } catch (error) {
         if (!(error instanceof ProviderError) || !['NOT_FOUND', 'RESTRICTED'].includes(error.code)) throw error;
-        await verify(session, options);
-        return { ...detail, questions: [], questionNotice: error.message };
+        return complete({ questions: [], questionNotice: error.message });
       }
-      if (!parsed.questions.some((question) => question.kind === 'objective')) return { ...detail, ...parsed };
+      if (!parsed.questions.some((question) => question.kind === 'objective')) return complete(parsed);
       try {
         const analysis = await request(www, '/zxbReport/report/getPaperAnalysis', session.accessToken, { examId: exam.examId, paperId: subjectId }, options);
         parsed = zhixueQuestionAnswers(parsed.questions, analysis);
@@ -264,12 +285,17 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
           : error.code === 'RESTRICTED' ? '智学网暂未开放本场考试的正确答案。'
           : '正确答案暂时加载失败，可下拉刷新重试；已有得分与我的答案仍可查看。';
       }
-      await verify(session, options);
-      return { ...detail, ...parsed };
+      return complete(parsed);
     },
     async getAnswerSheets(session, examId, subjectId, cachedResult, options) {
       const { exam, subject } = await sheetSubject(session, examId, subjectId, cachedResult, options);
       return zhixueSheets(await checksheet(session, exam, subjectId, options), subjectId, subject.subject);
+    },
+    async getQuestionAnswerSheets(session, examId, subjectId, questionId, cachedResult, options) {
+      const { exam, subject } = await sheetSubject(session, examId, subjectId, cachedResult, options);
+      const sheets = zhixueQuestionSheets(await checksheet(session, exam, subjectId, options), subjectId, subject.subject, questionId);
+      throwIfAborted(options?.signal);
+      return sheets;
     },
     async logout(session) {
       revoked.add(session);

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AnswerSheet, QuestionScore } from '../domain/models';
 import { ProviderError } from '../domain/models';
 import { numericScore, parseValidated } from './codec';
+import { zhixueRegions } from './zhixue-regions';
 
 const metric = z.union([z.number().finite(), z.string()]).nullish();
 const topicNumber = z.union([z.number().int().positive(), z.string().min(1)]);
@@ -75,6 +76,15 @@ function questionKinds(location: unknown): Map<number, QuestionScore['kind']> {
   return kinds;
 }
 
+function answerRegions(data: z.infer<typeof responseSchema>, sheetData: z.infer<typeof sheetDataSchema>): ReturnType<typeof zhixueRegions> {
+  try {
+    return zhixueRegions(sheetData.answerSheetLocationDTO, sheetData.userAnswerRecordDTO.answerRecordDetails.length, zhixueSheets(data, '', '').length);
+  } catch {
+    // Optional image/geometry metadata must not break existing question scores.
+    return new Map();
+  }
+}
+
 /** The official checksheet uses JSON strings for images, records and cut blocks. */
 export function zhixueQuestions(raw: unknown): { questions: QuestionScore[]; questionNotice?: string } {
   const data = parse(responseSchema, raw, '响应');
@@ -85,6 +95,19 @@ export function zhixueQuestions(raw: unknown): { questions: QuestionScore[]; que
   const sheetData = parse(sheetDataSchema, json(data.sheetDatas, 'sheetDatas'), '逐题记录');
   const records = sheetData.userAnswerRecordDTO.answerRecordDetails;
   const kinds = questionKinds(sheetData.answerSheetLocationDTO);
+  const regions = answerRegions(data, sheetData);
+  const imageOwners = new Map<string, number>();
+  const regionKeys = new Map<number, string>();
+  records.forEach((record, index) => {
+    if (record.isCandidate && !record.isSelected) return;
+    const kind = kinds.get(index) ?? (record.answerType === 's02Image' ? 'subjective' : undefined);
+    if (kind !== 'subjective' || (record.answerType != null && record.answerType !== 's02Image')) return;
+    const entries = regions.get(index);
+    if (!entries?.length) return;
+    const key = JSON.stringify(entries.map((entry) => [entry.pageIndex, entry.region]));
+    regionKeys.set(index, key);
+    imageOwners.set(key, index);
+  });
   const blocks = data.cutBlockDetail == null || data.cutBlockDetail === '' ? [] : parse(cutBlockSchema, json(data.cutBlockDetail, 'cutBlockDetail'), '子题');
   const questions: QuestionScore[] = [];
   records.forEach((record, index) => {
@@ -98,7 +121,10 @@ export function zhixueQuestions(raw: unknown): { questions: QuestionScore[]; que
       const block = blocks.find((item) => String(item.topicNumber) === id)?.cutBlocks.find((item) => String(item.subTopicIndex) === subId);
       return { id: `${id}.${subId}`, label: String(block?.dispTopic ?? `${label}(${subIndex + 1})`), score: score(sub.score), maxScore: score(block?.subTopicScore), ...(kind ? { kind } : {}) };
     }) : undefined;
-    questions.push({ id, label, score: score(record.score), maxScore: score(record.standardScore), ...(kind ? { kind } : {}), ...(myAnswer ? { myAnswer } : {}), ...(children?.length ? { children } : {}) });
+    const regionKey = regionKeys.get(index);
+    const hasAnswerRegion = regionKey !== undefined && imageOwners.get(regionKey) === index;
+    questions.push({ id, label, score: score(record.score), maxScore: score(record.standardScore), ...(kind ? { kind } : {}), ...(myAnswer ? { myAnswer } : {}),
+      ...(hasAnswerRegion ? { providerContext: { answerImageAvailable: 'true' } } : {}), ...(children?.length ? { children } : {}) });
   });
   return { questions, ...(!questions.length ? { questionNotice: '智学网暂无逐题得分记录，可单独查看答题卡。' } : {}) };
 }
@@ -145,5 +171,25 @@ export function zhixueSheets(raw: unknown, subjectId: string, subject: string): 
     if (url.protocol === 'http:') url.protocol = 'https:';
     if (url.protocol !== 'https:' || url.username || url.password || url.port) throw new ProviderError('RESTRICTED', '智学网返回了不支持的答题卡地址');
     return { subject, subjectId, url: url.href, watermarked: false };
+  });
+}
+
+/** All verified regions of this exact visible question; never substitute a parent or a partial mapping. */
+export function zhixueQuestionSheets(raw: unknown, subjectId: string, subject: string, questionId: string): AnswerSheet[] {
+  const question = zhixueQuestions(raw).questions.find((item) => item.id === questionId && item.kind === 'subjective' && item.providerContext?.answerImageAvailable === 'true');
+  if (!question) throw new ProviderError('NOT_FOUND', '智学网暂无此题可定位的作答区域，可返回查看整页答题卡');
+  const data = parse(responseSchema, raw, '响应');
+  const sheetData = parse(sheetDataSchema, json(data.sheetDatas, 'sheetDatas'), '逐题记录');
+  const index = sheetData.userAnswerRecordDTO.answerRecordDetails.findIndex((record, i) => String(record.topicNumber ?? i + 1) === questionId);
+  const regions = answerRegions(data, sheetData).get(index);
+  if (!regions?.length) throw new ProviderError('NOT_FOUND', '智学网暂无此题完整的作答区域，可返回查看整页答题卡');
+  const images = zhixueSheets(data, subjectId, subject);
+  return regions.map((entry) => {
+    const labels = entry.questionIndices.map((recordIndex) => {
+      const record = sheetData.userAnswerRecordDTO.answerRecordDetails[recordIndex];
+      return String(record.dispTitle ?? record.topicNumber ?? recordIndex + 1).trim();
+    });
+    const caption = labels.length > 1 ? `第${labels.join('、')}题（合并作答区域）` : `第${question.label}题`;
+    return { ...images[entry.pageIndex], subject: `${subject} · ${caption}`, region: entry.region };
   });
 }
