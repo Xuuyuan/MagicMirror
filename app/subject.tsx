@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
+import { examDisplayName } from '@/src/services/exam-display';
 import { Pressable, View } from 'react-native';
 import { Button, Checkbox, IconButton, List, Text, useTheme } from 'react-native-paper';
 import { examResultQueryOptions, subjectQueryOptions, watermarkedAnswerSheetsQueryOptions, essayQueryOptions, subjectStatisticsQueryOptions } from '@/src/services/queries';
@@ -52,7 +53,7 @@ function MarkedSheetSection({ sheets, pending, error, emptyText, onRetry, onPres
   </View>;
 }
 export default function Subject() {
-  const { accountId, examId, subjectId, subject } = useLocalSearchParams<{ accountId: string; examId: string; subjectId: string; subject: string }>();
+  const { accountId, examId, subjectId, subject, examName: selectedExamName } = useLocalSearchParams<{ accountId: string; examId: string; subjectId: string; subject: string; examName?: string }>();
   const { accounts } = useAccounts();
   const account = accounts.find((item) => item.id === accountId);
   const revision = account?.revision;
@@ -64,7 +65,7 @@ export default function Subject() {
   const query = useQuery(subjectQueryOptions(queryClient, accountId, revision, examId, subjectId, subject));
   // 科目查询已获取考试成绩；这里只订阅同一缓存，不另发考试请求。
   const examQuery = useQuery({ ...examResultQueryOptions(accountId, revision, examId), enabled: false });
-  const examName = examQuery.data?.examName;
+  const examName = examDisplayName(examQuery.data, selectedExamName);
   const noQuestions = !!query.data && !query.data.questions?.length;
   const markedQuery = useQuery({ ...watermarkedAnswerSheetsQueryOptions(queryClient, accountId, revision, examId, subjectId), enabled: !!revision && noQuestions });
   const provider = account ? providerRegistry.get(account.providerId) : undefined;

@@ -17,6 +17,15 @@ export const accountQueryKeys = {
   unclaimedExams: (accountId?: string, revision?: string) => ['account', accountId, revision, 'unclaimed-exams'] as const,
 };
 
+export function academicYearsQueryOptions(accountId: string, revision: string | undefined, supported: boolean) {
+  return queryOptions({
+    queryKey: ['account', accountId, revision, 'academic-years'] as const,
+    enabled: !!revision && supported,
+    queryFn: ({ signal }) => withAccount(accountId, (provider, session, requestSignal) =>
+      provider.getAcademicYears ? provider.getAcademicYears(session, { signal: requestSignal }) : Promise.resolve([]), signal),
+  });
+}
+
 export function profilesQueryOptions(accountId: string, revision: string | undefined) {
   return queryOptions({
     queryKey: accountQueryKeys.profiles(accountId, revision),

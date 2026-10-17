@@ -1,10 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Modal, PanResponder, StatusBar, useWindowDimensions, View, type ImageStyle, type ViewStyle } from 'react-native';
-import { ActivityIndicator } from 'react-native-paper';
+import { ActivityIndicator, Button, Text } from 'react-native-paper';
 import { fetchSheetImage } from '@/src/services/sheet-images';
 import type { AnswerSheet } from '@/src/domain/models';
+import { imageRegionBounds, imageRegionLayout } from '@/src/domain/image-region';
 
-export function SheetImage({ sheet, style, reloadKey = 0, onError, onLoad, resizeMethod = 'none' }: { sheet: AnswerSheet; style: ImageStyle & ViewStyle; reloadKey?: number; onError?: () => void; onLoad?: (width: number, height: number) => void; /** Android 解码方式：列表用 resize（按显示尺寸解码，避免整页扫描件吃满堆），查看器保持 none（缩放清晰）。 */ resizeMethod?: 'none' | 'resize' | 'auto' }) { const [attempt, setAttempt] = useState<{ key: string; uri?: string; failed?: boolean; fallback?: boolean }>({ key: '' }); const key = `${sheet.url}|${reloadKey}`; const state = attempt.key === key ? attempt : { key }; const handleLoad = (event: { nativeEvent: { source: { width: number; height: number } } }) => onLoad?.(event.nativeEvent.source.width, event.nativeEvent.source.height); useEffect(() => { let active = true; void fetchSheetImage(sheet.url, sheet.headers, reloadKey > 0).then((uri) => { if (active) setAttempt({ key, uri }); }).catch(() => { if (active) setAttempt({ key, fallback: true }); }); return () => { active = false; }; }, [key, reloadKey, sheet.url, sheet.headers]); if (state.failed) return <View style={style} />; if (state.fallback) return <Image source={{ uri: sheet.url, headers: sheet.headers }} style={style} resizeMode="contain" resizeMethod={resizeMethod} onLoad={handleLoad} onError={() => { setAttempt({ key, failed: true }); onError?.(); }} />; if (!state.uri) return <View style={[style, { alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator /></View>; return <Image source={{ uri: state.uri }} style={style} resizeMode="contain" resizeMethod={resizeMethod} onLoad={handleLoad} onError={() => { setAttempt({ key, fallback: true }); }} />; }
+function WholeSheetImage({ sheet, style, reloadKey = 0, onError, onLoad, resizeMethod = 'none' }: { sheet: AnswerSheet; style: ImageStyle & ViewStyle; reloadKey?: number; onError?: () => void; onLoad?: (width: number, height: number) => void; /** Android 解码方式：列表用 resize（按显示尺寸解码，避免整页扫描件吃满堆），查看器保持 none（缩放清晰）。 */ resizeMethod?: 'none' | 'resize' | 'auto' }) { const [attempt, setAttempt] = useState<{ key: string; uri?: string; failed?: boolean; fallback?: boolean }>({ key: '' }); const key = `${sheet.url}|${reloadKey}`; const state = attempt.key === key ? attempt : { key }; const handleLoad = (event: { nativeEvent: { source: { width: number; height: number } } }) => onLoad?.(event.nativeEvent.source.width, event.nativeEvent.source.height); useEffect(() => { let active = true; void fetchSheetImage(sheet.url, sheet.headers, reloadKey > 0).then((uri) => { if (active) setAttempt({ key, uri }); }).catch(() => { if (active) setAttempt({ key, fallback: true }); }); return () => { active = false; }; }, [key, reloadKey, sheet.url, sheet.headers]); if (state.failed) return <View style={style} />; if (state.fallback) return <Image source={{ uri: sheet.url, headers: sheet.headers }} style={style} resizeMode="contain" resizeMethod={resizeMethod} onLoad={handleLoad} onError={() => { setAttempt({ key, failed: true }); onError?.(); }} />; if (!state.uri) return <View style={[style, { alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator /></View>; return <Image source={{ uri: state.uri }} style={style} resizeMode="contain" resizeMethod={resizeMethod} onLoad={handleLoad} onError={() => { setAttempt({ key, fallback: true }); }} />; }
+
+type SheetImageProps = Parameters<typeof WholeSheetImage>[0];
+
+export function SheetImage(props: SheetImageProps) {
+  return props.sheet.region ? <RegionSheetImage {...props} /> : <WholeSheetImage {...props} />;
+}
+
+/** Keep the signed source unchanged; clip only the visible viewport, not the stored image. */
+function RegionSheetImage({ sheet, style, reloadKey = 0, onError, onLoad, resizeMethod }: SheetImageProps) {
+  const key = `${sheet.url}|${reloadKey}|${JSON.stringify(sheet.region)}`;
+  const [source, setSource] = useState({ key: '', width: 0, height: 0 });
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [failedKey, setFailedKey] = useState('');
+  const natural = source.key === key ? source : undefined;
+  const layout = natural && imageRegionLayout(sheet.region!, natural.width, natural.height, viewport.width, viewport.height);
+  if (failedKey === key) return <View style={style} />;
+  return <View style={[style, { overflow: 'hidden' }]} onLayout={(event) => setViewport(event.nativeEvent.layout)}>
+    <WholeSheetImage key={key} sheet={sheet} reloadKey={reloadKey} resizeMethod={resizeMethod}
+      style={layout ? { ...layout, position: 'absolute' } : { width: '100%', height: '100%', opacity: 0 }}
+      onError={() => { setFailedKey(key); onError?.(); }}
+      onLoad={(width, height) => {
+        const bounds = imageRegionBounds(sheet.region!, width, height);
+        if (!bounds) { setFailedKey(key); onError?.(); return; }
+        setSource({ key, width, height });
+        onLoad?.(bounds.width, bounds.height);
+      }} />
+    {!layout ? <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator /></View> : null}
+  </View>;
+}
 
 export function AdaptiveSheetImage({ sheet, reloadKey, onError }: { sheet: AnswerSheet; reloadKey?: number; onError?: () => void }) { const [containerWidth, setContainerWidth] = useState(0); const [ratio, setRatio] = useState<number>(); const height = containerWidth > 0 ? (ratio !== undefined ? Math.min(520, Math.max(48, Math.round(containerWidth * ratio))) : 220) : 360; return <View onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}><SheetImage sheet={sheet} resizeMethod="resize" style={{ width: '100%', height }} reloadKey={reloadKey} onError={onError} onLoad={(width, imageHeight) => { if (width > 0 && imageHeight > 0) setRatio(imageHeight / width); }} /></View>; }
 
@@ -88,15 +118,29 @@ function createViewerPanResponder(deps: ViewerGestureDeps) {
  * 支持捏合缩放（上限可达原图 1:1）、单指拖动（有边界）、双击在「适配屏幕/原图大小」间切换；
  * 长按触发 `onLongPress`（用于保存/复制等操作）；点击图片外的遮罩或系统返回键退出。
  */
-export function SheetViewerModal({ sheet, onDismiss, onLongPress }: { sheet: AnswerSheet | undefined; onDismiss: () => void; onLongPress?: (sheet: AnswerSheet) => void }) {
-  return <Modal transparent animationType="fade" visible={!!sheet} onRequestClose={onDismiss} statusBarTranslucent>
-    {sheet ? <ImageViewer sheet={sheet} onDismiss={onDismiss} onLongPress={onLongPress} /> : null}
+export function SheetViewerModal({ sheet, sheets, onDismiss, onLongPress }: { sheet?: AnswerSheet; sheets?: AnswerSheet[]; onDismiss: () => void; onLongPress?: (sheet: AnswerSheet) => void }) {
+  const items = sheets ?? (sheet ? [sheet] : []);
+  const key = JSON.stringify(items.map((item) => [item.url, item.region]));
+  const [page, setPage] = useState({ key: '', index: 0 });
+  const index = page.key === key ? Math.min(page.index, Math.max(0, items.length - 1)) : 0;
+  const current = items[index];
+  return <Modal transparent animationType="fade" visible={!!current} onRequestClose={onDismiss} statusBarTranslucent>
+    {current ? <View style={{ flex: 1, backgroundColor: '#000' }}>
+      {current.region && <Text style={{ color: '#fff', textAlign: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>{current.subject}</Text>}
+      <ImageViewer key={`${key}|${index}`} sheet={current} onDismiss={onDismiss} onLongPress={current.region ? undefined : onLongPress} />
+      {items.length > 1 ? <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, paddingTop: 8, paddingBottom: 32, backgroundColor: '#000' }}>
+        <Button compact textColor="#fff" disabled={index === 0} accessibilityLabel="上一作答区域" onPress={() => setPage({ key, index: index - 1 })}>上一区域</Button>
+        <Text style={{ color: '#fff' }} accessibilityLiveRegion="polite">区域 {index + 1} / {items.length}</Text>
+        <Button compact textColor="#fff" disabled={index === items.length - 1} accessibilityLabel="下一作答区域" onPress={() => setPage({ key, index: index + 1 })}>下一区域</Button>
+      </View> : null}
+    </View> : null}
   </Modal>;
 }
 
 function ImageViewer({ sheet, onDismiss, onLongPress }: { sheet: AnswerSheet; onDismiss: () => void; onLongPress?: (sheet: AnswerSheet) => void }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [natural, setNatural] = useState({ width: 0, height: 0 });
+  const [imageError, setImageError] = useState(false);
   const [transform, setTransform] = useState({ scale: 1, offset: { x: 0, y: 0 } });
   const screenRef = useRef({ width: screenWidth, height: screenHeight });
   const naturalRef = useRef({ width: 0, height: 0 });
@@ -107,7 +151,6 @@ function ImageViewer({ sheet, onDismiss, onLongPress }: { sheet: AnswerSheet; on
   const longPressRef = useRef(onLongPress);
   const sheetRef = useRef(sheet);
   const distance = useCallback((touches: readonly { pageX: number; pageY: number }[]) => touches.length < 2 ? 0 : Math.hypot(touches[1].pageX - touches[0].pageX, touches[1].pageY - touches[0].pageY), []);
-  useEffect(() => { screenRef.current = { width: screenWidth, height: screenHeight }; }, [screenWidth, screenHeight]);
   useEffect(() => { onDismissRef.current = onDismiss; }, [onDismiss]);
   useEffect(() => { longPressRef.current = onLongPress; sheetRef.current = sheet; }, [onLongPress, sheet]);
   const fireLongPress = useCallback(() => { const current = sheetRef.current; longPressRef.current?.(current); }, []);
@@ -146,17 +189,25 @@ function ImageViewer({ sheet, onDismiss, onLongPress }: { sheet: AnswerSheet; on
   useEffect(() => {
     setPanResponder(createViewerPanResponder({ distance, containScale, applyTransform, containsPoint, onLongPress: fireLongPress, gestureRef, transformRef, lastTapRef, onDismissRef }));
   }, [applyTransform, containScale, containsPoint, distance, fireLongPress]);
+  useEffect(() => () => { cancelPressTimer(gestureRef.current); lastTapRef.current = null; }, []);
 
   const baseWidth = natural.width || screenWidth;
   const baseHeight = natural.height || Math.round(screenWidth * 1.4);
-  return <View style={{ flex: 1, backgroundColor: '#000' }}>
+  return <View style={{ flex: 1, backgroundColor: '#000' }} onLayout={(event) => {
+    screenRef.current = { width: event.nativeEvent.layout.width, height: event.nativeEvent.layout.height };
+    if (naturalRef.current.width > 0) applyTransform(containScale(), { x: 0, y: 0 });
+  }}>
     <StatusBar barStyle="light-content" backgroundColor="#000000" />
     <View style={{ flex: 1 }} {...panResponder?.panHandlers}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
         <View style={{ transform: [{ translateX: transform.offset.x }, { translateY: transform.offset.y }, { scale: transform.scale }] }}>
-          <SheetImage sheet={sheet} style={{ width: baseWidth, height: baseHeight }} onLoad={(imageWidth, imageHeight) => { naturalRef.current = { width: imageWidth, height: imageHeight }; setNatural({ width: imageWidth, height: imageHeight }); applyTransform(containScale(), { x: 0, y: 0 }); }} />
+          <SheetImage sheet={sheet} style={{ width: baseWidth, height: baseHeight }} onError={() => setImageError(true)} onLoad={(imageWidth, imageHeight) => { naturalRef.current = { width: imageWidth, height: imageHeight }; setNatural({ width: imageWidth, height: imageHeight }); applyTransform(containScale(), { x: 0, y: 0 }); }} />
         </View>
       </View>
     </View>
+    {imageError ? <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center', gap: 12, backgroundColor: '#000' }}>
+      <Text style={{ color: '#fff' }}>图片无法加载或与作答区域不匹配，请关闭后重新获取。</Text>
+      <Button textColor="#fff" onPress={onDismiss}>关闭预览</Button>
+    </View> : null}
   </View>;
 }

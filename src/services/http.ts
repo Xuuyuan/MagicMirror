@@ -12,14 +12,14 @@ export function throwIfAborted(signal?: AbortSignal | null): void {
   error.name = 'AbortError';
   throw error;
 }
-export async function requestWithTimeout(transport: FetchTransport, url: string, init: RequestInit = {}, timeoutMs = 15000): Promise<Response> {
+export async function requestWithTimeout(transport: FetchTransport, url: string, init: RequestInit = {}, timeoutMs = 15000, policy?: { sensitive?: boolean }): Promise<Response> {
   throwIfAborted(init.signal);
   const controller = new AbortController();
   let timedOut = false;
   const started = Date.now();
   const endpoint = diagnosticEndpoint(url);
   const headers = new Headers(init.headers);
-  const debug = debugModeEnabled();
+  const debug = debugModeEnabled() && !policy?.sensitive;
   const request = debug ? { url, method: init.method ?? 'GET', headers: Object.fromEntries(headers.entries()), ...(debugBody(init.body) !== undefined ? { body: debugBody(init.body) } : {}) } : undefined;
   const ua = headers.get('User-Agent') ?? '';
   const metadata = { credentials: init.credentials, android: /Android ([\d.]+)/.exec(ua)?.[1], chrome: /Chrome\/([\d.]+)/.exec(ua)?.[1] };

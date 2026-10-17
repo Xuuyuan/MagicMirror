@@ -10,12 +10,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 let mockId: string | undefined;
 const mockSave = jest.fn();
-jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: mockId }) }));
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: mockId }), router: { push: (...args: unknown[]) => mockPush(...args) } }));
 jest.mock('../accounts-context', () => ({ useAccounts: () => ({ saveAccount: mockSave }) }));
 jest.mock('../storage/accounts', () => ({ accountStorage: { load: jest.fn() } }));
 jest.mock('../services/accounts', () => ({ authenticateAccount: jest.fn() }));
 jest.mock('../providers/registry', () => {
-  const providers = ['haofenshu-parent', 'other', 'septnet'].map((id) => ({ metadata: { id, name: id },
+  const providers = ['haofenshu-parent', 'other', 'septnet', 'fictional-web'].map((id) => ({ metadata: { id, name: id }, webLogin: id === 'fictional-web' ? {} : undefined,
     passwordLoginMethods: id === 'septnet' ? [{ id: 'app', label: '官方APP登录' }, { id: 'miniapp', label: '小程序登录' }] : undefined }));
   return { providerRegistry: { get: (id: string) => providers.find((provider) => provider.metadata.id === id), list: () => providers } };
 });
@@ -136,4 +137,16 @@ it('submits the newly entered password during replacement', async () => {
   await fill('密码', 'fictional-replacement-password');
   await click('登录并保存');
   expect(authenticateAccount).toHaveBeenCalledWith(expect.objectContaining({ password: 'fictional-replacement-password' }));
+});
+
+it('offers official web login without rendering native credentials for a web provider', async () => {
+  mockId = undefined;
+  await render();
+  await click('haofenshu-parent');
+  await click('fictional-web');
+  expect(input('密码')).toBeNull();
+  expect(input('登录账号')).toBeNull();
+  await click('官方网页登录');
+  expect(mockPush).toHaveBeenCalledWith({ pathname: '/official-login', params: { providerId: 'fictional-web', label: '' } });
+  expect(authenticateAccount).not.toHaveBeenCalled();
 });

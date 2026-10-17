@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, router } from 'expo-router';
 import { useWindowDimensions, View } from 'react-native';
 import { Button, Menu, Text, TextInput } from 'react-native-paper';
 import { ProviderError } from '@/src/domain/models';
@@ -63,6 +63,11 @@ export default function AccountEdit() {
     <Menu visible={providerMenu} onDismiss={() => setProviderMenu(false)} statusBarHeight={0} anchorPosition="bottom" contentStyle={{ width: screenWidth - 64 }} anchor={<Button mode="outlined" icon="chevron-down" disabled={busy} onPress={() => setProviderMenu(true)} style={{ width: '100%' }} contentStyle={{ flexDirection: 'row-reverse', justifyContent: 'space-between' }}>{providerName}</Button>}>
       {providerRegistry.list().map((provider) => <Menu.Item key={provider.metadata.id} leadingIcon={provider.metadata.id === providerId ? 'check' : undefined} title={providerSelectionName(provider.metadata)} disabled={busy} onPress={() => { if (provider.metadata.id !== providerId) { resetPasswordInput(); setLoginMethod(undefined); } setProviderId(provider.metadata.id); setTokenMode(false); setProviderMenu(false); }} />)}
     </Menu>
+    {selectedProvider?.webLogin ? <>
+      <TextInput mode="outlined" label="账号备注" value={label} onChangeText={setLabel} />
+      <Text>使用官方页面登录，验证由你完成。App 不读取或保存该平台密码。</Text>
+      <Button mode="contained" onPress={() => router.push({ pathname: '/official-login' as never, params: { providerId, ...(id ? { id } : {}), label } })}>官方网页登录</Button>
+    </> : <>
     {!tokenMode && selectedProvider?.passwordLoginMethods && <View style={{ gap: 8 }}>
       <Text variant="titleMedium">登录方式</Text>
       <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -87,5 +92,6 @@ export default function AccountEdit() {
     <Text>{tokenMode ? 'Token 保存在设备安全存储中，失效后需手动更新。请输入官方请求头 hfs-token 或 Cookie 中 hfs-session-id 的值。' : '登录凭据保存在设备安全存储中，用于登录失效后自动重新登录。'}</Text>
     {error ? <Text accessibilityRole="alert">{error}</Text> : null}
     <Button mode="contained" loading={busy} disabled={!canSubmit} onPress={() => void submit()}>登录并保存</Button>
+    </>}
   </Card>}</Body></Screen>;
 }
