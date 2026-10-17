@@ -28,7 +28,7 @@ it('keeps official scopes, chronological levels, zero counts and qualitative cha
   expect(sections[0].title).toBe('近五次成绩变化');
   expect(sections[0].items!.filter((item) => item.values['班级等级']).map((item) => item.values['班级等级'])).toEqual(['C等', 'B等']);
   expect(sections[0].items!.find((item) => item.values['班级等级'] === 'B等')!.values).toEqual({ 班级等级: 'B等', 班级变化: '相对稳定', 班级统计人数: '0' });
-  expect(sections[0].highlights).toContainEqual({ label: '班级人数', value: '0', unit: '人' });
+  expect(sections[0].highlights).toContainEqual({ label: '班级人数', value: '0' });
   expect(sections[0].notes).toEqual(['【班级】虚构官方评价\n虚构等第说明']);
   expect(sections[0].items![0].values['年级等级']).toBe('A等');
   expect(sections[0].highlights).toContainEqual({ label: '学校等第', value: 'A等' });
@@ -91,6 +91,57 @@ it('does not apply the current rules to another exam or paper in the history', (
   expect(zhixueTrendSections(currentTrend, { clazz: numberRule, grade: numberRule }, 'different-paper')[0].highlights?.some((item) => item.label.includes('排名'))).toBe(false);
 });
 
+it('merges class, school and union data while keeping current-exam metrics and rules separate', () => {
+  const point = { id: context.examId, name: '虚构联考', dateTime: 1600000000000, level: 'B等' };
+  const rule = { ...numberRule, levelList: [{ name: 'B等', lowBound: 5, upperBound: 10 }] };
+  const section = zhixueTrendSections({ scoreLevelType: 'number', list: [
+    { tag: { code: 'clazz' }, dataList: [{ ...point, statTotalNum: 20 }, { ...point, id: 'fictional-later', dateTime: 1600100000000, level: 'A等', statTotalNum: 99 }] },
+    { tag: { code: 'grade' }, dataList: [{ ...point, statTotalNum: 300, totalNum: 350 }] },
+    { tag: { code: 'union' }, totalNum: 4000, title: '虚构联考建议', dataList: [{ ...point, totalNum: 4000 }] },
+  ] }, { clazz: rule, grade: rule, union: rule }, context.examId)[0];
+  expect(section.highlights).toContainEqual({ label: '班级等第', value: 'B等' });
+  expect(section.highlights).toContainEqual({ label: '班级人数', value: '20' });
+  expect(section.highlights).toContainEqual({ label: '学校人数', value: '300' });
+  expect(section.highlights).toContainEqual({ label: '联考人数', value: '4000' });
+  expect(section.highlights).toContainEqual({ label: '联考排名（预估）', value: '201~400' });
+  expect(section.highlightRows).toEqual([3, 3, 3]);
+  expect(section.notes).toContain('【联考】虚构联考建议');
+  expect(section.items![0].values).toMatchObject({ 班级等级: 'B等', 年级等级: 'B等', 联考等级: 'B等', 联考统计人数: '4000' });
+  expect(section.itemGroups?.map((group) => group.label)).toEqual(['班级', '学校', '联考']);
+});
+
+it.each([
+  { statTotalNum: 20, totalNum: 20 }, { totalNum: 3999 }, { statTotalNum: 3999, totalNum: 4000 },
+])('does not replace ambiguous union counts with class, school or group totals %#', (counts) => {
+  const section = zhixueTrendSections({ scoreLevelType: 'number', list: [
+    { tag: { code: 'union' }, totalNum: 4000, dataList: [{ id: context.examId, level: 'B等', ...counts }] },
+  ] }, { union: numberRule }, context.examId)[0];
+  expect(section.highlights).toContainEqual({ label: '联考人数', value: '—' });
+  expect(section.highlights?.some((item) => item.label.includes('排名'))).toBe(false);
+  expect(section.items![0].values['联考统计人数']).toBeUndefined();
+  expect(section.notes?.join('')).toContain('口径缺失或不一致');
+});
+
+it('requests union rules for the same exam and subject without borrowing school rules', async () => {
+  const data = { ...currentTrend, list: [...currentTrend.list, { tag: { code: 'union' }, totalNum: 4000,
+    dataList: [{ id: context.examId, level: 'B等', totalNum: 4000 }],
+  }] };
+  const request = jest.fn(async (path: string, params: Record<string, string | number>) => {
+    if (path.endsWith('/getLevelTrend')) return data;
+    if (path.endsWith('/rulesAndCopywriter')) {
+      if (params.code === 'union') throw new ProviderError('NOT_FOUND', 'fictional unavailable union rule');
+      return numberRule;
+    }
+    return diagnosis;
+  });
+  const sections = await zhixueReportSections(request, context);
+  expect(request).toHaveBeenCalledWith('/zhixuebao/report/common/rulesAndCopywriter', { examId: context.examId, code: 'union', subjectCode: '00' });
+  expect(sections[0].highlights).toContainEqual({ label: '联考等第', value: 'B等' });
+  expect(sections[0].highlights).toContainEqual({ label: '联考人数', value: '4000' });
+  expect(sections[0].highlights?.some((item) => item.label === '联考排名（预估）')).toBe(false);
+  expect(sections[0].highlights?.some((item) => item.label === '学校排名（预估）')).toBe(true);
+});
+
 it('propagates rule-request session expiry instead of showing a stale estimate', async () => {
   const request = async (path: string) => {
     if (path.endsWith('/getLevelTrend')) return currentTrend;
@@ -112,7 +163,7 @@ it.each([
   const ranks = sections[0].highlights!.filter((item) => item.label.includes('排名'));
   expect(ranks).toEqual(expected ? [{ label: '班级排名（预估）', value: expected }, { label: '学校排名（预估）', value: expected }] : []);
   expect(sections[0].highlights).toContainEqual({ label: '学校等第', value: grade });
-  expect(sections[0].highlights).toContainEqual({ label: '年级人数', value: participants === undefined ? '—' : String(participants), unit: '人' });
+  expect(sections[0].highlights).toContainEqual({ label: '学校人数', value: participants === undefined ? '—' : String(participants) });
 });
 
 it.each([
@@ -137,7 +188,7 @@ it('combines both scopes of an exam and labels each summary without merging diff
   expect(sections[0].notes).toEqual(['【班级】班级建议', '【学校】学校建议']);
   expect(sections[0].highlightColumns).toBe(2);
   expect(sections[0].collapseNotes).toBe(true);
-  expect(sections[0].notesPosition).toBe('bottom');
+  expect(sections[0].notesPosition).toBe('before-items');
   expect(sections[0].items).toHaveLength(2);
   expect(sections[0].items![0].values).toEqual({ 班级等级: 'B', 班级统计人数: '0', 年级等级: 'C', 年级统计人数: '100' });
   expect(sections[0].items![1].values).toEqual({ 班级等级: 'A' });

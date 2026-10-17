@@ -19,7 +19,7 @@ export function ReportSectionBody({ section, expanded = false }: { section: Repo
   }) ?? [section.highlights ?? []];
   const noteContent = (expanded || !section.collapseNotes) && section.notes?.map((note, i) => <Text key={i} variant="bodyMedium" numberOfLines={!expanded && note.length > 120 ? 3 : undefined}>{note}</Text>);
   return <>
-    {section.notesPosition !== 'bottom' && noteContent}
+    {section.notesPosition === undefined && noteContent}
     {section.distributions?.length ? <DistributionGroups groups={section.distributions} /> : null}
     {section.radar && <RadarChart data={section.radar} />}
     {!!section.highlights?.length && <View style={{ gap: 12 }}>{highlightRows.map((row, rowIndex) => {
@@ -36,6 +36,7 @@ export function ReportSectionBody({ section, expanded = false }: { section: Repo
     </View>)}
     </View>;
     })}</View>}
+    {section.notesPosition === 'before-items' && noteContent}
     {expanded && section.items?.map((item, i) => <View key={`${item.label}-${i}`} style={{ gap: 6, paddingVertical: 8, borderBottomWidth: 0.5, borderBottomColor: theme.colors.outlineVariant }}>
       <Text variant="titleSmall">{item.label}</Text>
       {section.itemGroups ? section.itemGroups.filter((group) => group.columns.some((column) => item.values[column.key] !== undefined)).map((group) => <View key={group.label} accessibilityLabel={`${item.label} ${group.label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

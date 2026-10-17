@@ -124,8 +124,11 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
   mockSubject.reportSections = [...trendSections, zhixueKnowledgeSection({ tip: '虚构知识掌握建议', dataList: [] })];
   try {
     await act(async () => root.render(<Result />));
-    expect(container.textContent).toContain('班级人数15人');
-    expect(container.textContent).toContain('年级人数100人');
+    expect(container.textContent).toContain('班级人数15');
+    expect(container.textContent).toContain('学校人数100');
+    expect(container.textContent).not.toContain('班级人数15人');
+    expect(container.textContent).not.toContain('学校人数100人');
+    expect(container.textContent).not.toContain('年级人数');
     expect(container.textContent).toContain('班级排名（预估）3~4');
     expect(container.textContent).toContain('学校排名（预估）1~15');
     for (const label of ['班级排名（预估）', '学校排名（预估）']) {
@@ -220,6 +223,34 @@ it('hides score-based estimates and keeps partially confirmed scopes in separate
     expect(classMetric.parentElement).not.toBe(schoolMetric.parentElement);
     expect(JSON.parse(classMetric.getAttribute('data-style')!)[1].width).toBe('48%');
     expect(JSON.parse(schoolMetric.getAttribute('data-style')!)[1].width).toBe('31%');
+  } finally { mockResult.reportSections = previous; }
+});
+
+it('renders a union scope in the same trend card and exam detail without a separate duplicate exam', async () => {
+  const previous = mockResult.reportSections;
+  const point = { id: 'fictional-exam', name: '虚构三范围考试', dateDisp: '07.01', level: 'B等' };
+  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'B等', lowBound: 5, upperBound: 10 }] };
+  try {
+    mockResult.reportSections = zhixueTrendSections({ scoreLevelType: 'number', list: [
+      { tag: { code: 'clazz' }, dataList: [{ ...point, statTotalNum: 20 }] },
+      { tag: { code: 'grade' }, dataList: [{ ...point, statTotalNum: 300 }] },
+      { tag: { code: 'union' }, title: '虚构联考总结', totalNum: 4000, dataList: [{ ...point, totalNum: 4000 }] },
+    ] }, { clazz: rule, grade: rule, union: rule }, 'fictional-exam');
+    await act(async () => root.render(<Result />));
+    expect(container.textContent).toContain('联考等第B等');
+    expect(container.textContent).toContain('联考人数4000');
+    expect(container.textContent).not.toContain('联考人数4000人');
+    expect(container.textContent).toContain('联考排名（预估）201~400');
+    expect(container.textContent).not.toContain('【联考】虚构联考总结');
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click());
+    expect(container.textContent!.match(/虚构三范围考试/g)).toHaveLength(1);
+    expect(container.querySelector('[aria-label="07.01 · 虚构三范围考试 联考"]')?.textContent).toBe('联考等第B等变化—人数4000');
+    expect(container.textContent).toContain('【联考】虚构联考总结');
+    const summary = [...container.querySelectorAll('span')].find((node) => node.textContent === '【联考】虚构联考总结')!;
+    const examTitle = [...container.querySelectorAll('span')].find((node) => node.textContent === '07.01 · 虚构三范围考试')!;
+    const metric = [...container.querySelectorAll('span')].find((node) => node.textContent === '联考人数')!;
+    expect(metric.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(summary.compareDocumentPosition(examTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   } finally { mockResult.reportSections = previous; }
 });
 it('keeps a true report exam name ahead of the list name and preserves multi-subject card widths', async () => {

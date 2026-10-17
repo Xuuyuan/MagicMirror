@@ -10,7 +10,12 @@ const tag = z.object({ code: text.optional(), name: text.optional() });
 const improvement = z.object({ tag: tag.optional() }).nullish();
 const level = z.object({ name: text, lowBound: z.number().finite(), upperBound: z.number().finite() });
 const numberRuleSchema = z.object({ ruleObtainType: z.literal(2), leveType: z.literal('NUMBER'), levelList: z.array(level).min(1).max(100) });
-type TrendRules = Partial<Record<'clazz' | 'grade', unknown>>;
+const trendScopes = [
+  { code: 'clazz', label: '班级', prefix: '班级', countLabel: '班级人数' },
+  { code: 'grade', label: '学校', prefix: '年级', countLabel: '学校人数' },
+  { code: 'union', label: '联考', prefix: '联考', countLabel: '联考人数' },
+] as const;
+type TrendRules = Partial<Record<typeof trendScopes[number]['code'], unknown>>;
 const trendSchema = z.object({
   chartName: text.optional(), levelList: z.array(level).max(100).optional(), scoreLevelType: z.unknown().optional(),
   list: z.array(z.object({
@@ -61,41 +66,53 @@ export function zhixueTrendSections(raw: unknown, rules: TrendRules = {}, curren
   const data = parse(trendSchema, raw);
   const exams = new Map<string, { timestamp: number; item: NonNullable<ReportSection['items']>[number] }>();
   const groups = data.list.flatMap((group) => {
-    const scope = group.tag.code === 'clazz' ? '班级' : group.tag.code === 'grade' ? '年级' : undefined;
+    const scope = trendScopes.find((scope) => scope.code === group.tag.code);
     if (!scope || !group.dataList.length) return [];
     const points = [...group.dataList].sort((a, b) => (a.dateTime ?? 0) - (b.dateTime ?? 0));
-    const latest = points[points.length - 1];
+    const current = currentId ? points.find((point) => point.id === currentId) : points[points.length - 1];
+    const participantsFor = (point: typeof points[number]): number | undefined => {
+      if (scope.code !== 'union') return point.statTotalNum;
+      if (!currentId || point.id !== currentId) return undefined;
+      if (point.statTotalNum !== undefined && group.statTotalNum === point.statTotalNum) return point.statTotalNum;
+      if (point.totalNum !== undefined && group.totalNum === point.totalNum && (point.statTotalNum === undefined || point.statTotalNum === point.totalNum)) return point.totalNum;
+      return undefined;
+    };
     const highlights: NonNullable<ReportSection['highlights']> = [];
-    const displayScope = scope === '年级' ? '学校' : scope;
-    highlights.push({ label: `${displayScope}等第`, value: latest.level || '—' });
-    highlights.push({ label: `${scope}人数`, value: latest.statTotalNum === undefined ? '—' : String(latest.statTotalNum), unit: '人' });
-    const canEstimate = data.scoreLevelType === undefined || data.scoreLevelType === 'number';
-    const estimatedRank = canEstimate && currentId && latest.id === currentId ? estimateRank(rules[group.tag.code as 'clazz' | 'grade'], latest.level, latest.statTotalNum) : undefined;
-    if (estimatedRank) highlights.push({ label: `${displayScope}排名（预估）`, value: estimatedRank });
+    const participants = current ? participantsFor(current) : undefined;
+    if (current) {
+      highlights.push({ label: `${scope.label}等第`, value: current.level || '—' });
+      highlights.push({ label: scope.countLabel, value: participants === undefined ? '—' : String(participants) });
+      const canEstimate = data.scoreLevelType === undefined || data.scoreLevelType === 'number';
+      const estimatedRank = canEstimate && currentId && current.id === currentId ? estimateRank(rules[scope.code], current.level, participants) : undefined;
+      if (estimatedRank) highlights.push({ label: `${scope.label}排名（预估）`, value: estimatedRank });
+    }
     for (const point of points) {
       const date = point.dateTime === undefined ? point.dateDisp : new Date(point.dateTime + 8 * 3600000).toISOString().slice(0, 10);
       const key = JSON.stringify([point.dateTime ?? point.dateDisp ?? null, point.name ?? null,
-        point.dateTime === undefined && !point.dateDisp && !point.name ? `${scope}-${exams.size}` : null]);
+        point.dateTime === undefined && !point.dateDisp && !point.name ? `${scope.code}-${exams.size}` : null]);
       const record = exams.get(key) ?? { timestamp: point.dateTime ?? 0, item: { label: notes([date, point.name]).join(' · ') || '考试记录', values: {} } };
-      if (point.level) record.item.values[`${scope}等级`] = point.level;
-      if (point.improveBar?.tag?.name) record.item.values[`${scope}变化`] = point.improveBar.tag.name;
-      if (point.statTotalNum !== undefined) record.item.values[`${scope}统计人数`] = String(point.statTotalNum);
+      if (point.level) record.item.values[`${scope.prefix}等级`] = point.level;
+      if (point.improveBar?.tag?.name) record.item.values[`${scope.prefix}变化`] = point.improveBar.tag.name;
+      const pointParticipants = participantsFor(point);
+      if (pointParticipants !== undefined) record.item.values[`${scope.prefix}统计人数`] = String(pointParticipants);
       exams.set(key, record);
     }
-    const summary = notes([group.title, group.reference?.content]).filter((note) => !note.includes('参考教育部门等级划分规则'));
-    return [{ highlights, notes: summary.length ? [`【${displayScope}】${summary.join('\n')}`.replaceAll('统计人数', '人数').replaceAll('等级', '等第').replaceAll('年级', '学校')] : [] }];
+    const summary = current ? notes([group.title, group.reference?.content,
+      scope.code === 'union' && participants === undefined ? '联考人数口径缺失或不一致，人数显示为“—”，暂不预估联考排名。' : undefined,
+    ]).filter((note) => !note.includes('参考教育部门等级划分规则')) : [];
+    return [{ highlights, notes: summary.length ? [`【${scope.label}】${summary.join('\n')}`.replaceAll('统计人数', '人数').replaceAll('等级', '等第').replaceAll('年级', '学校')] : [] }];
   });
   if (!groups.length) return [];
   return [{
     id: 'zhixue-trend', title: data.chartName || '近五次成绩变化',
     highlights: groups.flatMap((group) => group.highlights),
     highlightColumns: groups.some((group) => group.highlights.length === 3) ? 3 : 2,
-    highlightRows: groups.map((group) => group.highlights.length),
-    itemGroups: ['班级', '年级'].map((scope) => ({ label: scope === '年级' ? '学校' : scope,
-      columns: ['等级', '变化', '统计人数'].map((label) => ({ key: `${scope}${label}`, label: label === '等级' ? '等第' : label === '统计人数' ? '人数' : label })),
+    highlightRows: groups.map((group) => group.highlights.length).filter((count) => count > 0),
+    itemGroups: trendScopes.map((scope) => ({ label: scope.label,
+      columns: ['等级', '变化', '统计人数'].map((label) => ({ key: `${scope.prefix}${label}`, label: label === '等级' ? '等第' : label === '统计人数' ? '人数' : label })),
     })),
     notes: groups.flatMap((group) => group.notes),
-    collapseNotes: true, notesPosition: 'bottom',
+    collapseNotes: true, notesPosition: 'before-items',
     items: [...exams.values()].sort((first, second) => first.timestamp - second.timestamp).map((record) => record.item),
   }];
 }
@@ -162,7 +179,7 @@ export async function zhixueReportSections(request: ReportRequest, context: Zhix
     const subjectCode = context.paperId ? context.subjectCode : '00';
     const rules: TrendRules = {};
     if (subjectCode && (trend.scoreLevelType === undefined || trend.scoreLevelType === 'number')) {
-      await Promise.all((['clazz', 'grade'] as const).map(async (code) => {
+      await Promise.all(trendScopes.map(async ({ code }) => {
         if (!trend.list.some((group) => group.tag.code === code && group.dataList.length)) return;
         try {
           rules[code] = await request('/zhixuebao/report/common/rulesAndCopywriter', { examId: context.examId, code, subjectCode });
