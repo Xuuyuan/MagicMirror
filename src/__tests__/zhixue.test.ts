@@ -31,7 +31,7 @@ function setup(handler?: Handler) {
       else if (url.pathname.includes('RoutingHost') || url.pathname.endsWith('/getHostByBusinessId')) body = { code: 200, data: { host: www + '/' } };
       else throw new Error('Unexpected fictional request');
     }
-    return { ok: true, status: 200, json: async () => body } as Response;
+    return { ok: true, status: 200, headers: new Headers({ 'content-type': 'application/json', 'set-cookie': 'fictional-session=fictional-cookie; HttpOnly' }), json: async () => body, clone: () => ({ text: async () => JSON.stringify(body) }) } as Response;
   });
   return { provider: createZhixueProvider(transport), transport };
 }
@@ -59,6 +59,7 @@ it('validates web session and profile without requiring exams, passwords or cook
   expect(provider.getProfiles).toBeUndefined();
   expect(provider.selectProfile).toBeUndefined();
   expect(provider.refreshSession).toBeUndefined();
+  expect(diagnosticSnapshot()).toEqual([]);
 });
 it('rejects a mismatched current student and refuses password login', async () => {
   const { provider } = setup();
@@ -214,7 +215,13 @@ it('loads objective correct answers from the actual zxbReport endpoint and parse
   expect(Object.fromEntries(url.searchParams)).toEqual({ examId: 'fictional-exam-1', paperId: 'paper' });
   expect(init).toMatchObject({ credentials: 'omit', redirect: 'error' });
   expect(new Headers(init?.headers).get('XToken')).toBe(token);
-  expect(diagnosticSnapshot()).toEqual([]);
+  const diagnostic = diagnosticSnapshot().find((event) => event.request?.url === String(input));
+  expect(diagnostic).toMatchObject({
+    request: { url: String(input), method: 'GET', headers: { xtoken: token, token } },
+    response: { status: 200, headers: { 'set-cookie': 'fictional-session=fictional-cookie; HttpOnly' } },
+  });
+  expect(JSON.parse(diagnostic!.response!.body!)).toMatchObject({ errorCode: 0, result: expect.any(String) });
+  expect(JSON.parse(JSON.parse(diagnostic!.response!.body!).result)).toMatchObject({ typeTopicAnalysis: expect.any(Array) });
 });
 it('preserves scores and my answers if the correct-answer resource is unavailable', async () => {
   const { provider, encoded, cached } = await sheetSetup((url) => {
@@ -350,13 +357,16 @@ it('distinguishes empty lists, expiry, content absence and schema errors', async
   }
   await expect(setup(() => ({ unexpected: true })).provider.getProfile(session)).rejects.toMatchObject({ code: 'UNKNOWN' });
 });
-it('limits official time calibration to one retry and never exports sensitive diagnostics', async () => {
+it('limits official time calibration to one retry and records both complete responses in debug mode', async () => {
   setDiagnosticDebugMode(true);
   const { provider, transport } = setup(() => ({ errorCode: 9801, result: [{ systime: String(Date.now()) }] }));
   await expect(provider.getProfile(session)).rejects.toThrow('时间校准失败');
   expect(transport).toHaveBeenCalledTimes(2);
-  expect(JSON.stringify(diagnosticSnapshot())).not.toContain(token);
-  expect(diagnosticSnapshot()).toEqual([]);
+  expect(diagnosticSnapshot()).toHaveLength(2);
+  for (const event of diagnosticSnapshot()) {
+    expect(event.request?.headers).toMatchObject({ xtoken: token, token });
+    expect(JSON.parse(event.response!.body!)).toMatchObject({ errorCode: 9801 });
+  }
 });
 it('automatically opens the report after reading the parent student, then emits only its explicit payload', () => {
   const local = new Map([['xToken', token]]);

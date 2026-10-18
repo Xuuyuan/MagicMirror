@@ -71,7 +71,7 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         credentials: 'omit', redirect: 'error', signal: options?.signal,
         headers: { XToken: token, token, authbizcode: '0001', authguid: guid, authtimestamp: timestamp, authtoken: signature,
           Referer: `${www}/activitystudy/web-report/index.html`, Origin: www, 'User-Agent': 'Mozilla/5.0' },
-      }, 15000, { sensitive: true });
+      }, 15000);
     } catch {
       throwIfAborted(options?.signal);
       throw new ProviderError('NETWORK', '智学网连接失败，请检查网络后重试', true);
