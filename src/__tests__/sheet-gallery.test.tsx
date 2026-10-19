@@ -19,6 +19,7 @@ const mockParams: { accountId: string; examId: string; subjectId?: string } = {
 };
 const mockGetAnswerSheets = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
 const mockGetPaperImages = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
+const mockImageErrorCallbacks = new Map<string, () => void>();
 const mockProvider = {
   getExamResult: async () => ({ examId: mockParams.examId, examName: '虚构考试', subjects: [] }),
   getAnswerSheets: mockGetAnswerSheets,
@@ -112,15 +113,18 @@ jest.mock('../sheet-image', () => ({
     sheet: AnswerSheet;
     reloadKey: number;
     onError: () => void;
-  }) => (
-    <img
-      alt={sheet.subject}
-      src={sheet.url}
-      data-headers={JSON.stringify(sheet.headers)}
-      data-reload-key={reloadKey}
-      onError={onError}
-    />
-  ),
+  }) => {
+    mockImageErrorCallbacks.set(sheet.url, onError);
+    return (
+      <img
+        alt={sheet.subject}
+        src={sheet.url}
+        data-headers={JSON.stringify(sheet.headers)}
+        data-reload-key={reloadKey}
+        onError={onError}
+      />
+    );
+  },
   SheetViewerModal: ({
     sheet,
     onDismiss,
@@ -179,6 +183,7 @@ let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 let client: QueryClient;
 beforeEach(() => {
+  mockImageErrorCallbacks.clear();
   mockParams.subjectId = 'fictional-subject';
   mockGetAnswerSheets.mockReset().mockResolvedValue(sheets);
   mockGetPaperImages.mockReset().mockResolvedValue(papers);
@@ -276,17 +281,17 @@ describe.each(routes)('$title', (route) => {
       route.Page === ExamPapers ? '查看第 1 页原卷' : null,
     );
   });
-  it('连接预览、长按菜单及关闭回调，保持当前全页错误提示行为', async () => {
+  it('连接预览、长按菜单及关闭回调，预览正常图片不会清除其他图片错误', async () => {
     await render(route.Page);
     await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
     await failImage(0);
-    expect(container.querySelectorAll('button')).toHaveLength(2);
+    expect(container.querySelectorAll('button')).toHaveLength(1);
     const pressable = container.querySelectorAll('[data-pressable]')[1];
     await act(async () => pressable.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(container.querySelector('[data-viewer]')?.getAttribute('data-viewer')).toBe(
       route.data[1].url,
     );
-    expect(container.textContent).not.toContain('图片链接可能已过期');
+    expect(container.textContent).toContain('图片链接可能已过期');
     await click('预览长按');
     expect(container.querySelector('[data-actions]')?.getAttribute('data-actions')).toBe(
       route.data[1].url,
@@ -314,6 +319,63 @@ describe.each(routes)('$title', (route) => {
     expect(container.textContent).not.toContain('图片链接可能已过期');
     expect(container.querySelector('img')?.getAttribute('data-reload-key')).toBe('1');
     expect(route.fetch).toHaveBeenCalledTimes(2);
+  });
+  it.each([0, 1])('仅第 %s 张失败时显示错误，列表重排后仍跟随对应图片', async (index) => {
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await failImage(index);
+    await failImage(index);
+    const cards = container.querySelectorAll('article');
+    expect(cards[index].textContent).toContain('图片链接可能已过期');
+    expect(cards[1 - index].textContent).not.toContain('图片链接可能已过期');
+    expect(container.querySelectorAll('button')).toHaveLength(1);
+    await act(async () => {
+      client.setQueryData(
+        route.key(mockParams.accountId, 'r1', mockParams.examId, mockParams.subjectId!),
+        [...route.data].reverse(),
+      );
+    });
+    await waitFor(() => {
+      const reordered = container.querySelectorAll('article');
+      expect(reordered[1 - index].textContent).toContain('图片链接可能已过期');
+      expect(reordered[index].textContent).not.toContain('图片链接可能已过期');
+    });
+  });
+  it('多张图片失败可分别提示，预览其中一张仅清除该张提示', async () => {
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await failImage(0);
+    await failImage(1);
+    expect(container.querySelectorAll('button')).toHaveLength(2);
+    await act(async () => {
+      container
+        .querySelector('[data-pressable]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.querySelectorAll('article')[0].textContent).not.toContain(
+      '图片链接可能已过期',
+    );
+    expect(container.querySelectorAll('article')[1].textContent).toContain('图片链接可能已过期');
+  });
+  it('重新获取同一链接也会刷新全部图片，忽略上一轮迟到的失败回调', async () => {
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    const previousFailure = mockImageErrorCallbacks.get(route.data[0].url)!;
+    await failImage(0);
+    await failImage(1);
+    await click(route.refresh);
+    await waitFor(() => expect(route.fetch).toHaveBeenCalledTimes(2));
+    expect(container.textContent).not.toContain('图片链接可能已过期');
+    for (const image of container.querySelectorAll('img')) {
+      expect(image.getAttribute('data-reload-key')).toBe('1');
+    }
+    await act(async () => previousFailure());
+    expect(container.textContent).not.toContain('图片链接可能已过期');
+    await failImage(0);
+    expect(container.querySelectorAll('article')[0].textContent).toContain('图片链接可能已过期');
+    expect(container.querySelectorAll('article')[1].textContent).not.toContain(
+      '图片链接可能已过期',
+    );
   });
 });
 

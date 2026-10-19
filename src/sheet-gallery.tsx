@@ -36,11 +36,18 @@ export function SheetGallery({
 }: SheetGalleryProps) {
   const [zoom, setZoom] = useState<AnswerSheet>();
   const [actions, setActions] = useState<AnswerSheet>();
-  const [imageError, setImageError] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Set<string>>(() => new Set());
   const [reloadKey, setReloadKey] = useState(0);
-  const handleImageError = () => setImageError(true);
+  // 按图片及加载轮次区分失败，旧链接或旧轮次的回调不影响新图片。
+  function imageErrorKey(sheet: AnswerSheet) {
+    return JSON.stringify([accountId, subjectId, sheet.subject, sheet.url, reloadKey]);
+  }
   const handleImagePress = useDoubleTap<AnswerSheet>((sheet) => {
-    setImageError(false);
+    setImageErrors((previous) => {
+      const next = new Set(previous);
+      next.delete(imageErrorKey(sheet));
+      return next;
+    });
     setZoom(sheet);
   });
   if (!subjectId)
@@ -72,7 +79,7 @@ export function SheetGallery({
     );
   const sheets = query.data ?? [];
   function refresh() {
-    setImageError(false);
+    setImageErrors(new Set());
     setReloadKey((value) => value + 1);
     void query.refetch();
   }
@@ -95,11 +102,16 @@ export function SheetGallery({
                 <AdaptiveSheetImage
                   sheet={sheet}
                   reloadKey={reloadKey}
-                  onError={handleImageError}
+                  onError={() => {
+                    const key = imageErrorKey(sheet);
+                    setImageErrors((previous) => new Set(previous).add(key));
+                  }}
                 />
               </Pressable>
-              {imageError ? <Text>图片链接可能已过期，请重新获取。</Text> : null}
-              {imageError ? (
+              {imageErrors.has(imageErrorKey(sheet)) ? (
+                <Text>图片链接可能已过期，请重新获取。</Text>
+              ) : null}
+              {imageErrors.has(imageErrorKey(sheet)) ? (
                 <Button onPress={refresh} loading={query.isFetching}>
                   {refreshText}
                 </Button>
