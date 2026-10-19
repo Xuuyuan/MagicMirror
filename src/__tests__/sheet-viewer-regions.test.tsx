@@ -2,6 +2,7 @@
 import { act, type ReactNode } from 'react';
 import { SheetViewerModal } from '../sheet-image';
 import type { AnswerSheet } from '../domain/models';
+import { sheetImageErrorMessage } from '../services/sheet-images';
 
 type ImageProps = {
   source: { uri: string };
@@ -24,6 +25,8 @@ const mockViews: ViewProps[] = [];
 const mockPans: PanConfig[] = [];
 jest.mock('../services/sheet-images', () => ({
   fetchSheetImage: jest.fn(async (uri: string) => uri),
+  sheetImageErrorMessage: jest.fn(async () => '该考试的图片已被平台归档，暂时无法读取'),
+  sheetImageFailureMessage: '图片无法加载或与作答区域不匹配，请关闭后重新获取。',
 }));
 jest.mock('react-native', () => ({
   Modal: ({ visible, children }: { visible: boolean; children: ReactNode }) =>
@@ -179,6 +182,22 @@ it('reports mismatched source dimensions instead of displaying an incorrect crop
   expect(container.textContent).toContain('图片无法加载或与作答区域不匹配');
   await act(async () =>
     Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((b) => b.textContent === '关闭预览')!
+      .click(),
+  );
+  expect(dismiss).toHaveBeenCalledTimes(1);
+});
+
+it.each([true, false])('归档图片显示错误并可关闭预览，停止转圈（分区：%s）', async (region) => {
+  const dismiss = jest.fn();
+  const sheet = { ...sheets[0], region: region ? sheets[0].region : undefined };
+  await act(async () => root.render(<SheetViewerModal sheet={sheet} onDismiss={dismiss} />));
+  await act(async () => mockImages.at(-1)!.onError());
+  expect(sheetImageErrorMessage).toHaveBeenCalledWith(sheet.url);
+  expect(container.textContent).toContain('已被平台归档');
+  expect(container.textContent).not.toContain('loading');
+  await act(async () =>
+    Array.from(container.querySelectorAll('button'))
       .find((b) => b.textContent === '关闭预览')!
       .click(),
   );

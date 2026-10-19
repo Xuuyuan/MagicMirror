@@ -19,7 +19,7 @@ const mockParams: { accountId: string; examId: string; subjectId?: string } = {
 };
 const mockGetAnswerSheets = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
 const mockGetPaperImages = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
-const mockImageErrorCallbacks = new Map<string, () => void>();
+const mockImageErrorCallbacks = new Map<string, (message?: string) => void>();
 const mockProvider = {
   getExamResult: async () => ({ examId: mockParams.examId, examName: '虚构考试', subjects: [] }),
   getAnswerSheets: mockGetAnswerSheets,
@@ -112,7 +112,7 @@ jest.mock('../sheet-image', () => ({
   }: {
     sheet: AnswerSheet;
     reloadKey: number;
-    onError: () => void;
+    onError: (message?: string) => void;
   }) => {
     mockImageErrorCallbacks.set(sheet.url, onError);
     return (
@@ -121,7 +121,7 @@ jest.mock('../sheet-image', () => ({
         src={sheet.url}
         data-headers={JSON.stringify(sheet.headers)}
         data-reload-key={reloadKey}
-        onError={onError}
+        onError={() => onError()}
       />
     );
   },
@@ -305,6 +305,18 @@ describe.each(routes)('$title', (route) => {
     expect(container.querySelector('[data-actions]')?.getAttribute('data-actions')).toBe(
       route.data[1].url,
     );
+  });
+  it('保留图片归档提示，不误报为链接过期，仍可重新获取', async () => {
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () =>
+      mockImageErrorCallbacks.get(route.data[0].url)!('该考试的图片已被平台归档，暂时无法读取'),
+    );
+    expect(container.textContent).toContain('已被平台归档');
+    expect(container.textContent).not.toContain('图片链接可能已过期');
+    await click(route.refresh);
+    await waitFor(() => expect(route.fetch).toHaveBeenCalledTimes(2));
+    expect(container.textContent).not.toContain('已被平台归档');
   });
   it('重新获取时清除提示、更新下载刷新标识并使用新链接', async () => {
     await render(route.Page);

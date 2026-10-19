@@ -1,4 +1,10 @@
-import { downloadSheetImage, fetchSheetImage } from '@/src/services/sheet-images';
+import {
+  downloadSheetImage,
+  fetchSheetImage,
+  sheetImageErrorMessage,
+  archivedSheetMessage,
+  sheetImageFailureMessage,
+} from '@/src/services/sheet-images';
 
 jest.mock('expo-file-system', () => {
   const files = new Map<string, string>();
@@ -48,6 +54,54 @@ jest.mock('expo-file-system', () => {
     downloads,
     failures,
   };
+});
+
+describe('智学网图片错误识别', () => {
+  const url = 'https://zhixue-sc.oss-cn-hangzhou.aliyuncs.com/fictional.jpg?Signature=fictional';
+  let originalFetch: typeof fetch;
+  let transport: jest.Mock;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    transport = jest.fn();
+    globalThis.fetch = transport;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    jest.useRealTimers();
+  });
+  it('识别403响应中的InvalidObjectState，不附带账号请求头', async () => {
+    transport.mockResolvedValue({
+      status: 403,
+      text: async () => '<Error><Code>InvalidObjectState</Code></Error>',
+    });
+    await expect(sheetImageErrorMessage(url)).resolves.toBe(archivedSheetMessage);
+    expect(transport).toHaveBeenCalledWith(url, {
+      credentials: 'omit',
+      signal: expect.any(AbortSignal),
+    });
+  });
+  it.each([
+    [403, '<Error><Code>AccessDenied</Code></Error>'],
+    [404, '<Error><Code>NoSuchKey</Code></Error>'],
+    [200, 'InvalidObjectState'],
+  ])('不把其他错误误报为归档（%s）', async (status, body) => {
+    transport.mockResolvedValue({ status, text: async () => body });
+    await expect(sheetImageErrorMessage(url)).resolves.toBe(sheetImageFailureMessage);
+  });
+  it('其他平台不发起额外诊断请求', async () => {
+    await expect(sheetImageErrorMessage('https://example.test/fictional.jpg')).resolves.toBe(
+      sheetImageFailureMessage,
+    );
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('网络或响应体读取停滞时8秒结束诊断', async () => {
+    jest.useFakeTimers();
+    transport.mockResolvedValue({ status: 403, text: () => new Promise(() => {}) });
+    const pending = sheetImageErrorMessage(url);
+    await jest.advanceTimersByTimeAsync(8000);
+    await expect(pending).resolves.toBe(sheetImageFailureMessage);
+    expect(transport.mock.calls[0][1].signal.aborted).toBe(true);
+  });
 });
 
 jest.mock('expo-crypto', () => ({

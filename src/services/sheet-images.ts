@@ -5,6 +5,49 @@ import { embeddedImageData } from '../domain/image-uri';
 const cacheDirectory = new Directory(Paths.cache, 'answer-sheets');
 const inFlight = new Map<string, Promise<string>>();
 
+export const archivedSheetMessage =
+  '该考试的图片已被平台归档，暂时无法读取，请前往智学网官方 App 查看。';
+export const sheetImageFailureMessage = '图片无法加载或与作答区域不匹配，请关闭后重新获取。';
+
+/** Only diagnose failed Zhixue storage reads; never forward account headers to OSS. */
+export async function sheetImageErrorMessage(uri: string): Promise<string> {
+  let host: string;
+  try {
+    const url = new URL(uri);
+    if (url.protocol !== 'https:') return sheetImageFailureMessage;
+    host = url.hostname;
+  } catch {
+    return sheetImageFailureMessage;
+  }
+  if (!/^zhixue(?:-[a-z0-9]+)?\.oss-[a-z0-9-]+\.aliyuncs\.com$/i.test(host))
+    return sheetImageFailureMessage;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await fetch(uri, { credentials: 'omit', signal: controller.signal });
+        if (response.status !== 403) return sheetImageFailureMessage;
+        const body = await response.text();
+        return /<Code>\s*InvalidObjectState\s*<\/Code>/.test(body)
+          ? archivedSheetMessage
+          : sheetImageFailureMessage;
+      })(),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(sheetImageFailureMessage);
+          controller.abort();
+        }, 8000);
+      }),
+    ]);
+  } catch {
+    return sheetImageFailureMessage;
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+}
+
 async function downloadToCache(
   uri: string,
   headers: Record<string, string> | undefined,

@@ -10,7 +10,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { ActivityIndicator, Button, Text } from 'react-native-paper';
-import { fetchSheetImage } from '@/src/services/sheet-images';
+import {
+  fetchSheetImage,
+  sheetImageErrorMessage,
+  sheetImageFailureMessage,
+} from '@/src/services/sheet-images';
 import type { AnswerSheet } from '@/src/domain/models';
 import { imageRegionBounds, imageRegionLayout } from '@/src/domain/image-region';
 
@@ -25,7 +29,7 @@ function WholeSheetImage({
   sheet: AnswerSheet;
   style: ImageStyle & ViewStyle;
   reloadKey?: number;
-  onError?: () => void;
+  onError?: (message?: string) => void;
   onLoad?: (width: number, height: number) => void;
   /** Android 解码方式：列表用 resize（按显示尺寸解码，避免整页扫描件吃满堆），查看器保持 none（缩放清晰）。 */ resizeMethod?:
     'none' | 'resize' | 'auto';
@@ -33,27 +37,59 @@ function WholeSheetImage({
   const [attempt, setAttempt] = useState<{
     key: string;
     uri?: string;
-    failed?: boolean;
+    failed?: string;
     fallback?: boolean;
   }>({ key: '' });
   const key = `${sheet.url}|${reloadKey}`;
   const state = attempt.key === key ? attempt : { key };
-  const handleLoad = (event: { nativeEvent: { source: { width: number; height: number } } }) =>
-    onLoad?.(event.nativeEvent.source.width, event.nativeEvent.source.height);
+  const callbacks = useRef({ onError, onLoad });
   useEffect(() => {
-    let active = true;
+    callbacks.current = { onError, onLoad };
+  }, [onError, onLoad]);
+  const task = useRef<{
+    key: string;
+    active: boolean;
+    done: boolean;
+    timer?: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const fail = useCallback(async () => {
+    const current = task.current;
+    if (!current?.active || current.key !== key || current.done) return;
+    current.done = true;
+    clearTimeout(current.timer);
+    const message = await sheetImageErrorMessage(sheet.url);
+    if (!current.active) return;
+    setAttempt({ key, failed: message });
+    callbacks.current.onError?.(message);
+  }, [key, sheet.url]);
+  const handleLoad = (event: { nativeEvent: { source: { width: number; height: number } } }) => {
+    const current = task.current;
+    if (!current?.active || current.key !== key || current.done) return;
+    current.done = true;
+    clearTimeout(current.timer);
+    callbacks.current.onLoad?.(event.nativeEvent.source.width, event.nativeEvent.source.height);
+  };
+  useEffect(() => {
+    const current = { key, active: true, done: false, timer: setTimeout(() => void fail(), 20000) };
+    task.current = current;
     void fetchSheetImage(sheet.url, sheet.headers, reloadKey > 0)
       .then((uri) => {
-        if (active) setAttempt({ key, uri });
+        if (current.active && !current.done) setAttempt({ key, uri });
       })
       .catch(() => {
-        if (active) setAttempt({ key, fallback: true });
+        if (current.active && !current.done) setAttempt({ key, fallback: true });
       });
     return () => {
-      active = false;
+      current.active = false;
+      clearTimeout(current.timer);
     };
-  }, [key, reloadKey, sheet.url, sheet.headers]);
-  if (state.failed) return <View style={style} />;
+  }, [key, reloadKey, sheet.url, sheet.headers, fail]);
+  if (state.failed)
+    return (
+      <View style={[style, { alignItems: 'center', justifyContent: 'center', padding: 16 }]}>
+        {!onError && <Text>{state.failed}</Text>}
+      </View>
+    );
   if (state.fallback)
     return (
       <Image
@@ -62,10 +98,7 @@ function WholeSheetImage({
         resizeMode="contain"
         resizeMethod={resizeMethod}
         onLoad={handleLoad}
-        onError={() => {
-          setAttempt({ key, failed: true });
-          onError?.();
-        }}
+        onError={() => void fail()}
       />
     );
   if (!state.uri)
@@ -82,7 +115,10 @@ function WholeSheetImage({
       resizeMethod={resizeMethod}
       onLoad={handleLoad}
       onError={() => {
-        setAttempt({ key, fallback: true });
+        const current = task.current;
+        if (!current?.active || current.key !== key || current.done) return;
+        if (state.uri === sheet.url) void fail();
+        else setAttempt({ key, fallback: true });
       }}
     />
   );
@@ -106,7 +142,7 @@ function RegionSheetImage({
   const key = `${sheet.url}|${reloadKey}|${JSON.stringify(sheet.region)}`;
   const [source, setSource] = useState({ key: '', width: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [failedKey, setFailedKey] = useState('');
+  const [failure, setFailure] = useState({ key: '', message: '' });
   const natural = source.key === key ? source : undefined;
   const layout =
     natural &&
@@ -117,7 +153,12 @@ function RegionSheetImage({
       viewport.width,
       viewport.height,
     );
-  if (failedKey === key) return <View style={style} />;
+  if (failure.key === key)
+    return (
+      <View style={[style, { alignItems: 'center', justifyContent: 'center', padding: 16 }]}>
+        {!onError && <Text>{failure.message}</Text>}
+      </View>
+    );
   return (
     <View
       style={[style, { overflow: 'hidden' }]}
@@ -133,15 +174,15 @@ function RegionSheetImage({
             ? { ...layout, position: 'absolute' }
             : { width: '100%', height: '100%', opacity: 0 }
         }
-        onError={() => {
-          setFailedKey(key);
-          onError?.();
+        onError={(message = sheetImageFailureMessage) => {
+          setFailure({ key, message });
+          onError?.(message);
         }}
         onLoad={(width, height) => {
           const bounds = imageRegionBounds(sheet.region!, width, height);
           if (!bounds) {
-            setFailedKey(key);
-            onError?.();
+            setFailure({ key, message: sheetImageFailureMessage });
+            onError?.(sheetImageFailureMessage);
             return;
           }
           setSource({ key, width, height });
@@ -174,7 +215,7 @@ export function AdaptiveSheetImage({
 }: {
   sheet: AnswerSheet;
   reloadKey?: number;
-  onError?: () => void;
+  onError?: (message?: string) => void;
 }) {
   const [containerWidth, setContainerWidth] = useState(0);
   const [ratio, setRatio] = useState<number>();
@@ -430,7 +471,7 @@ function ImageViewer({
 }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [natural, setNatural] = useState({ width: 0, height: 0 });
-  const [imageError, setImageError] = useState(false);
+  const [imageError, setImageError] = useState('');
   const [transform, setTransform] = useState({ scale: 1, offset: { x: 0, y: 0 } });
   const screenRef = useRef({ width: screenWidth, height: screenHeight });
   const naturalRef = useRef({ width: 0, height: 0 });
@@ -553,7 +594,7 @@ function ImageViewer({
             <SheetImage
               sheet={sheet}
               style={{ width: baseWidth, height: baseHeight }}
-              onError={() => setImageError(true)}
+              onError={(message) => setImageError(message ?? sheetImageFailureMessage)}
               onLoad={(imageWidth, imageHeight) => {
                 naturalRef.current = { width: imageWidth, height: imageHeight };
                 setNatural({ width: imageWidth, height: imageHeight });
@@ -577,7 +618,9 @@ function ImageViewer({
             backgroundColor: '#000',
           }}
         >
-          <Text style={{ color: '#fff' }}>图片无法加载或与作答区域不匹配，请关闭后重新获取。</Text>
+          <Text style={{ color: '#fff', textAlign: 'center', paddingHorizontal: 24 }}>
+            {imageError}
+          </Text>
           <Button textColor="#fff" onPress={onDismiss}>
             关闭预览
           </Button>

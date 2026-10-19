@@ -36,7 +36,7 @@ export function SheetGallery({
 }: SheetGalleryProps) {
   const [zoom, setZoom] = useState<AnswerSheet>();
   const [actions, setActions] = useState<AnswerSheet>();
-  const [imageErrors, setImageErrors] = useState<Set<string>>(() => new Set());
+  const [imageErrors, setImageErrors] = useState<Map<string, string>>(() => new Map());
   const [reloadKey, setReloadKey] = useState(0);
   // 按图片及加载轮次区分失败，旧链接或旧轮次的回调不影响新图片。
   function imageErrorKey(sheet: AnswerSheet) {
@@ -44,7 +44,7 @@ export function SheetGallery({
   }
   const handleImagePress = useDoubleTap<AnswerSheet>((sheet) => {
     setImageErrors((previous) => {
-      const next = new Set(previous);
+      const next = new Map(previous);
       next.delete(imageErrorKey(sheet));
       return next;
     });
@@ -79,7 +79,7 @@ export function SheetGallery({
     );
   const sheets = query.data ?? [];
   function refresh() {
-    setImageErrors(new Set());
+    setImageErrors(new Map());
     setReloadKey((value) => value + 1);
     void query.refetch();
   }
@@ -102,14 +102,16 @@ export function SheetGallery({
                 <AdaptiveSheetImage
                   sheet={sheet}
                   reloadKey={reloadKey}
-                  onError={() => {
+                  onError={(message) => {
                     const key = imageErrorKey(sheet);
-                    setImageErrors((previous) => new Set(previous).add(key));
+                    setImageErrors((previous) =>
+                      new Map(previous).set(key, message ?? '图片链接可能已过期，请重新获取。'),
+                    );
                   }}
                 />
               </Pressable>
               {imageErrors.has(imageErrorKey(sheet)) ? (
-                <Text>图片链接可能已过期，请重新获取。</Text>
+                <Text>{imageErrors.get(imageErrorKey(sheet))}</Text>
               ) : null}
               {imageErrors.has(imageErrorKey(sheet)) ? (
                 <Button onPress={refresh} loading={query.isFetching}>
