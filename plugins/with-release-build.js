@@ -8,7 +8,10 @@ module.exports = function withReleaseBuild(config) {
       if (source.split(anchor).length !== 2) {
         throw new Error('Cannot locate the Expo ReactHost context in MainApplication.');
       }
-      mod.modResults.contents = source.replace(anchor, `${anchor}\n      useDevSupport = BuildConfig.DEBUG,`);
+      mod.modResults.contents = source.replace(
+        anchor,
+        `${anchor}\n      useDevSupport = BuildConfig.DEBUG,`,
+      );
     }
     return mod;
   });
@@ -16,10 +19,14 @@ module.exports = function withReleaseBuild(config) {
     const properties = {
       'android.enableMinifyInReleaseBuilds': 'true',
       'android.enableShrinkResourcesInReleaseBuilds': 'true',
-      'reactNativeArchitectures': 'arm64-v8a',
+      reactNativeArchitectures: 'arm64-v8a',
     };
-    mod.modResults = mod.modResults.filter((item) => item.type !== 'property' || !(item.key in properties));
-    mod.modResults.push(...Object.entries(properties).map(([key, value]) => ({ type: 'property', key, value })));
+    mod.modResults = mod.modResults.filter(
+      (item) => item.type !== 'property' || !(item.key in properties),
+    );
+    mod.modResults.push(
+      ...Object.entries(properties).map(([key, value]) => ({ type: 'property', key, value })),
+    );
     return mod;
   });
 };

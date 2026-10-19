@@ -49,7 +49,7 @@ npm run start
 
 用 Expo Go 扫描终端二维码，或执行 `npm run android` 启动 Android 模拟器/已连接设备。
 
-MuMu 调试使用 `npm run android:mumu`，会连接 Expo 调试服务并打开 App。`npm run web` 用于浏览器界面调试；`npm run doctor` 用于诊断 Expo 环境和依赖。`lint`、`typecheck`、`test` 保留为可单独运行的检查入口，`npm run check` 一次执行这三项。
+MuMu 调试使用 `npm run android:mumu`，会连接 Expo 调试服务并打开 App。`npm run web` 用于浏览器界面调试；`npm run doctor` 用于诊断 Expo 环境和依赖。`npm run format` 统一手写源码、测试和配置的格式，`npm run format:check` 只检查格式；生成文件、分析目录和测试 JSON 数据不参与格式化。`lint`、`typecheck`、`test` 保留为可单独运行的检查入口，`npm run check` 一次执行格式检查、lint、类型检查、离线测试和发布检查。
 
 ### 以源码构建 APK
 

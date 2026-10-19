@@ -2,15 +2,35 @@
 import { act, type ReactNode } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { DiagnosticButton } from '../diagnostic-button';
-import { clearDiagnostics, diagnosticSnapshot, recordDiagnostic, setDiagnosticDebugMode } from '../services/diagnostics';
+import {
+  clearDiagnostics,
+  diagnosticSnapshot,
+  recordDiagnostic,
+  setDiagnosticDebugMode,
+} from '../services/diagnostics';
 
 let mockDebugMode = false;
-jest.mock('../state/app', () => ({ useAppStore: (selector: (state: { debugMode: boolean }) => unknown) => selector({ debugMode: mockDebugMode }) }));
+jest.mock('../state/app', () => ({
+  useAppStore: (selector: (state: { debugMode: boolean }) => unknown) =>
+    selector({ debugMode: mockDebugMode }),
+}));
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => {}) }));
-jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { version: 'fictional-version' } } }));
-jest.mock('react-native', () => ({ Platform: { OS: 'android', Version: 32 }, View: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-jest.mock('react-native-paper', () => ({ Button: ({ children, onPress }: { children: ReactNode; onPress: () => void }) => <button onClick={onPress}>{children}</button> }));
-const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => { render: (element: ReactNode) => void; unmount: () => void } }>('react-dom/client');
+jest.mock('expo-constants', () => ({
+  __esModule: true,
+  default: { expoConfig: { version: 'fictional-version' } },
+}));
+jest.mock('react-native', () => ({
+  Platform: { OS: 'android', Version: 32 },
+  View: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+jest.mock('react-native-paper', () => ({
+  Button: ({ children, onPress }: { children: ReactNode; onPress: () => void }) => (
+    <button onClick={onPress}>{children}</button>
+  ),
+}));
+const { createRoot } = jest.requireActual<{
+  createRoot: (element: Element) => { render: (element: ReactNode) => void; unmount: () => void };
+}>('react-dom/client');
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 it('only offers debug controls in debug mode and clears the current capture without disabling later capture', async () => {
@@ -36,10 +56,14 @@ it('only offers debug controls in debug mode and clears the current capture with
     recordDiagnostic({ at: 'fictional-after', endpoint: 'test/after', outcome: 'response' });
     await act(async () => copy.click());
     const payload = JSON.parse(jest.mocked(Clipboard.setStringAsync).mock.calls.at(-1)![0]);
-    expect(payload.events).toEqual([{ at: 'fictional-after', endpoint: 'test/after', outcome: 'response' }]);
+    expect(payload.events).toEqual([
+      { at: 'fictional-after', endpoint: 'test/after', outcome: 'response' },
+    ]);
   } finally {
     await act(async () => root.unmount());
-    container.remove(); mockDebugMode = false;
-    clearDiagnostics(); setDiagnosticDebugMode(false);
+    container.remove();
+    mockDebugMode = false;
+    clearDiagnostics();
+    setDiagnosticDebugMode(false);
   }
 });

@@ -26,21 +26,47 @@ export default function About() {
       <Body>
         <Card>
           <View style={{ alignItems: 'center', gap: 12, paddingVertical: 16 }}>
-            <Image source={require('../assets/icon.png')} accessibilityLabel="魔镜 App logo" resizeMode="contain" style={{ width: 96, height: 96, borderRadius: 24 }} />
-            <Text variant="titleLarge" style={{ textAlign: 'center' }}>魔镜</Text>
-            <Text variant="bodyMedium" style={{ textAlign: 'center' }}>{Constants.expoConfig?.version ?? '未知'}</Text>
+            <Image
+              source={require('../assets/icon.png')}
+              accessibilityLabel="魔镜 App logo"
+              resizeMode="contain"
+              style={{ width: 96, height: 96, borderRadius: 24 }}
+            />
+            <Text variant="titleLarge" style={{ textAlign: 'center' }}>
+              魔镜
+            </Text>
+            <Text variant="bodyMedium" style={{ textAlign: 'center' }}>
+              {Constants.expoConfig?.version ?? '未知'}
+            </Text>
           </View>
           <Text variant="bodyMedium" style={{ textAlign: 'left' }}>
-            本项目遵循 <Text accessibilityRole="link" style={{ color: theme.colors.primary, textDecorationLine: 'underline' }} onPress={() => void openLink(licenseUrl)}>Apache-2.0 license</Text>{' 开源。'}
+            本项目遵循{' '}
+            <Text
+              accessibilityRole="link"
+              style={{ color: theme.colors.primary, textDecorationLine: 'underline' }}
+              onPress={() => void openLink(licenseUrl)}
+            >
+              Apache-2.0 license
+            </Text>
+            {' 开源。'}
           </Text>
         </Card>
         <Card>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+          >
             <View style={{ flex: 1 }}>
               <Text style={{ fontWeight: '700' }}>检查更新</Text>
               <Text variant="bodySmall">通过 GitHub 获取最新版本</Text>
             </View>
-            <Button compact loading={checking} disabled={checking} onPress={() => void checkForUpdates()}>立即检查</Button>
+            <Button
+              compact
+              loading={checking}
+              disabled={checking}
+              onPress={() => void checkForUpdates()}
+            >
+              立即检查
+            </Button>
           </View>
         </Card>
         <NavigationCard

@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+android/
+ios/
+dist/
+web-build/
+coverage/
+analysis/
+package-lock.json
+src/theme-presets.generated.ts
+src/__tests__/fixtures/**/*.json

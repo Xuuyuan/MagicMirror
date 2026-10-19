@@ -1,1 +1,8 @@
-module.exports = { testEnvironment: 'node', testMatch: ['**/__tests__/**/*.test.ts?(x)'], transform: { '^.+\\.[jt]sx?$': ['babel-jest', { presets: ['babel-preset-expo'] }] }, transformIgnorePatterns: ['node_modules/(?!@noble/)'], moduleNameMapper: { '^@/(.*)$': '<rootDir>/$1' }, collectCoverageFrom: ['src/**/*.{ts,tsx}'] };
+module.exports = {
+  testEnvironment: 'node',
+  testMatch: ['**/__tests__/**/*.test.ts?(x)'],
+  transform: { '^.+\\.[jt]sx?$': ['babel-jest', { presets: ['babel-preset-expo'] }] },
+  transformIgnorePatterns: ['node_modules/(?!@noble/)'],
+  moduleNameMapper: { '^@/(.*)$': '<rootDir>/$1' },
+  collectCoverageFrom: ['src/**/*.{ts,tsx}'],
+};

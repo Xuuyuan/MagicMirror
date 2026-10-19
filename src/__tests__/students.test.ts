@@ -1,4 +1,8 @@
-import { selectedStudentIndex, studentProviderLabel, studentSwitcherVisible } from '../services/students';
+import {
+  selectedStudentIndex,
+  studentProviderLabel,
+  studentSwitcherVisible,
+} from '../services/students';
 import type { StudentProfile } from '../domain/models';
 
 // 全部为虚构数据（仅结构与平台返回一致），不含任何真实学生信息。
@@ -38,7 +42,9 @@ describe('首页平台标签', () => {
   });
 
   it('只有一个学生或列表尚未取到时不加后缀', () => {
-    expect(studentProviderLabel('好分数', [{ id: '21', displayName: '林测测' }], undefined)).toBe('好分数');
+    expect(studentProviderLabel('好分数', [{ id: '21', displayName: '林测测' }], undefined)).toBe(
+      '好分数',
+    );
     expect(studentProviderLabel('海豚阅卷', undefined, '22')).toBe('海豚阅卷');
   });
 

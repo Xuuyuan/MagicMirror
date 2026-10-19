@@ -6,24 +6,54 @@ import { ProviderError, type LocalAccount } from '@/src/domain/models';
 jest.mock('expo-crypto', () => ({ randomUUID: jest.fn(() => 'fictional-uuid') }));
 jest.mock('expo-secure-store', () => {
   const values = new Map<string, string>();
-  return { setItemAsync: jest.fn(async (key: string, value: string) => { values.set(key, value); }), getItemAsync: jest.fn(async (key: string) => values.get(key) ?? null), deleteItemAsync: jest.fn(async (key: string) => { values.delete(key); }) };
+  return {
+    setItemAsync: jest.fn(async (key: string, value: string) => {
+      values.set(key, value);
+    }),
+    getItemAsync: jest.fn(async (key: string) => values.get(key) ?? null),
+    deleteItemAsync: jest.fn(async (key: string) => {
+      values.delete(key);
+    }),
+  };
 });
 
-const base: LocalAccount = { id: 'fictional-account', revision: 'r1', label: '虚构', providerId: 'haofenshu-parent', login: 'fictional', authMode: 'token', session: { providerId: 'haofenshu-parent', accountId: 'fictional', accessToken: 'TEST_TOKEN' } };
+const base: LocalAccount = {
+  id: 'fictional-account',
+  revision: 'r1',
+  label: '虚构',
+  providerId: 'haofenshu-parent',
+  login: 'fictional',
+  authMode: 'token',
+  session: { providerId: 'haofenshu-parent', accountId: 'fictional', accessToken: 'TEST_TOKEN' },
+};
 afterEach(() => jest.restoreAllMocks());
 it('保存小程序通道并在失效后沿原通道恢复；切换失败保留原配置', async () => {
   const provider = providerRegistry.get('septnet')!;
   const session = { providerId: 'septnet', accountId: 'fictional', accessToken: 'TEST_TOKEN' };
   const login = jest.spyOn(provider, 'authenticateWithMethod').mockResolvedValue(session);
   const appLogin = jest.spyOn(provider, 'authenticate');
-  const account = await authenticateAccount({ label: '虚构', providerId: 'septnet', login: 'fictional', password: 'fictional-password', loginMethod: 'miniapp' });
+  const account = await authenticateAccount({
+    label: '虚构',
+    providerId: 'septnet',
+    login: 'fictional',
+    password: 'fictional-password',
+    loginMethod: 'miniapp',
+  });
   await accountStorage.save({ ...account, session: { ...session, expiresAt: 0 } });
   expect((await accountStorage.load(account.id))?.loginMethod).toBe('miniapp');
   await withAccount(account.id, async () => []);
   expect(login).toHaveBeenLastCalledWith('fictional', 'fictional-password', 'miniapp');
   expect(appLogin).not.toHaveBeenCalled();
   login.mockRejectedValue(new ProviderError('INVALID_CREDENTIALS', 'fictional failure'));
-  await expect(authenticateAccount({ id: account.id, label: '虚构', providerId: 'septnet', login: 'fictional', loginMethod: 'app' })).rejects.toThrow('fictional failure');
+  await expect(
+    authenticateAccount({
+      id: account.id,
+      label: '虚构',
+      providerId: 'septnet',
+      login: 'fictional',
+      loginMethod: 'app',
+    }),
+  ).rejects.toThrow('fictional failure');
   expect((await accountStorage.load(account.id))?.loginMethod).toBe('miniapp');
 });
 /** 好分数家长版登录后会列出绑定学生；这些用例只关心账号服务，替身掉真实网络请求。 */
@@ -34,7 +64,9 @@ function stubProfileLookup() {
 
 it('persists token mode in secure storage and stops reusing a confirmed expired token', async () => {
   await accountStorage.save(base);
-  const operation = jest.fn(async () => { throw new ProviderError('SESSION_EXPIRED', 'expired'); });
+  const operation = jest.fn(async () => {
+    throw new ProviderError('SESSION_EXPIRED', 'expired');
+  });
   await expect(withAccount(base.id, operation)).rejects.toThrow('Token 已失效');
   expect((await accountStorage.load(base.id))?.session?.expiresAt).toBe(0);
   await expect(withAccount(base.id, operation)).rejects.toThrow('Token 已失效');
@@ -46,7 +78,13 @@ it('preserves the saved password when an account is edited with a blank password
   const provider = providerRegistry.get(base.providerId)!;
   const login = jest.spyOn(provider, 'authenticate').mockResolvedValue(base.session!);
   stubProfileLookup();
-  const account = await authenticateAccount({ id: base.id, label: base.label, providerId: base.providerId, login: base.login, password: '' });
+  const account = await authenticateAccount({
+    id: base.id,
+    label: base.label,
+    providerId: base.providerId,
+    login: base.login,
+    password: '',
+  });
   expect(login).toHaveBeenCalledWith(base.login, 'fictional-password');
   expect(account.password).toBe('fictional-password');
 });
@@ -54,9 +92,17 @@ it('preserves the saved password when an account is edited with a blank password
 it('replaces a token without retaining the old password', async () => {
   await accountStorage.save({ ...base, authMode: 'password', password: 'fictional-password' });
   const provider = providerRegistry.get(base.providerId)!;
-  jest.spyOn(provider, 'authenticateWithToken').mockResolvedValue({ ...base.session!, accessToken: 'NEW_TEST_TOKEN' });
+  jest
+    .spyOn(provider, 'authenticateWithToken')
+    .mockResolvedValue({ ...base.session!, accessToken: 'NEW_TEST_TOKEN' });
   stubProfileLookup();
-  const account = await authenticateAccount({ id: base.id, label: base.label, providerId: base.providerId, login: base.login, token: 'NEW_TEST_TOKEN' });
+  const account = await authenticateAccount({
+    id: base.id,
+    label: base.label,
+    providerId: base.providerId,
+    login: base.login,
+    token: 'NEW_TEST_TOKEN',
+  });
   expect(account.authMode).toBe('token');
   expect(account.password).toBeUndefined();
   await accountStorage.save(account);
@@ -67,7 +113,11 @@ it('replaces a token without retaining the old password', async () => {
 
 it('does not mark a token expired on transient network errors', async () => {
   await accountStorage.save(base);
-  await expect(withAccount(base.id, async () => { throw new ProviderError('NETWORK', 'network'); })).rejects.toMatchObject({ code: 'NETWORK' });
+  await expect(
+    withAccount(base.id, async () => {
+      throw new ProviderError('NETWORK', 'network');
+    }),
+  ).rejects.toMatchObject({ code: 'NETWORK' });
   expect((await accountStorage.load(base.id))?.session?.expiresAt).toBeUndefined();
 });
 
@@ -76,12 +126,24 @@ it('does not recover or retry after the query has been cancelled', async () => {
   const controller = new AbortController();
   controller.abort();
   const operation = jest.fn(async () => []);
-  await expect(withAccount(base.id, operation, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  await expect(withAccount(base.id, operation, controller.signal)).rejects.toMatchObject({
+    name: 'AbortError',
+  });
   expect(operation).not.toHaveBeenCalled();
 });
 
 it('does not overwrite a newer session when invalidating an old token', async () => {
-  await accountStorage.save({ ...base, session: { ...base.session!, accessToken: 'NEW_TEST_TOKEN' } });
-  expect(await accountStorage.updateSession(base.id, base.revision, { ...base.session!, expiresAt: 0 }, 'TEST_TOKEN')).toBe(false);
+  await accountStorage.save({
+    ...base,
+    session: { ...base.session!, accessToken: 'NEW_TEST_TOKEN' },
+  });
+  expect(
+    await accountStorage.updateSession(
+      base.id,
+      base.revision,
+      { ...base.session!, expiresAt: 0 },
+      'TEST_TOKEN',
+    ),
+  ).toBe(false);
   expect((await accountStorage.load(base.id))?.session?.accessToken).toBe('NEW_TEST_TOKEN');
 });

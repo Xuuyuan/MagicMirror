@@ -4,12 +4,17 @@ export const gradeDisplayOptions = [
   { mode: 'percentile', label: '只显示百分比' },
   { mode: 'none', label: '不显示' },
 ] as const;
-export type GradeDisplayMode = typeof gradeDisplayOptions[number]['mode'];
+export type GradeDisplayMode = (typeof gradeDisplayOptions)[number]['mode'];
 export function isGradeDisplayMode(mode: unknown): mode is GradeDisplayMode {
-  return gradeDisplayOptions.some(option => option.mode === mode);
+  return gradeDisplayOptions.some((option) => option.mode === mode);
 }
 
-export function formatGradeLabel(providerId: string | undefined, grade: string | undefined, percentile: string | undefined, mode: GradeDisplayMode): string | undefined {
+export function formatGradeLabel(
+  providerId: string | undefined,
+  grade: string | undefined,
+  percentile: string | undefined,
+  mode: GradeDisplayMode,
+): string | undefined {
   if (providerId === 'septnet') {
     if (mode === 'none') return undefined;
     if (mode === 'grade') return grade || undefined;

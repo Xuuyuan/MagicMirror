@@ -16,12 +16,14 @@ live('实际 Provider 搜索与已绑定预览（只读）', async () => {
     const matches = projects.filter((item) => item.name === examName);
     expect(matches.length).toBe(1);
     const before = await provider.getExamList(session);
-    expect(before.some(item => item.id === matches[0].id)).toBe(true);
+    expect(before.some((item) => item.id === matches[0].id)).toBe(true);
     const preview = await provider.previewExamBinding!(session, matches[0].id, studentCode);
     expect(preview.status).toBe('already-bound');
     const after = await provider.getExamList(session);
     expect(after.length).toBe(before.length);
-    expect(after.every(item => before.some(previous => previous.id === item.id))).toBe(true);
+    expect(after.every((item) => before.some((previous) => previous.id === item.id))).toBe(true);
     console.log('[live] 搜索考试项目及已关联处理通过；未调用绑定接口');
-  } finally { await provider.logout(session); }
+  } finally {
+    await provider.logout(session);
+  }
 });
