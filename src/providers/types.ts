@@ -34,7 +34,7 @@ export interface OfficialWebLogin {
   url: string;
   allowedOrigins: readonly string[];
   /** Only read official session material. Never read password fields or log messages. */
-  script(attemptId: string): string;
+  script(attemptId: string, credentials?: { login: string; password: string }): string;
   authenticate(payload: unknown): Promise<AuthSession>;
 }
 export interface ScoreProvider {

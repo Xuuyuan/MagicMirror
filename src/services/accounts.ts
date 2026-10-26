@@ -38,20 +38,20 @@ function providerFor(account: LocalAccount) {
   if (!provider) throw new ProviderError('UNSUPPORTED', '该账号的平台不可用，请编辑账号');
   return provider;
 }
+export function assertAccountSessionIdentity(account: LocalAccount, session: AuthSession): void {
+  if (
+    session.providerId !== account.providerId ||
+    (account.session && session.accountId !== account.session.accountId)
+  ) {
+    throw new ProviderError('RESTRICTED', '登录身份与原账号不一致，请作为新账号添加');
+  }
+}
 export async function confirmAccountSession(
   account: LocalAccount,
   candidate: AuthSession,
 ): Promise<AuthSession> {
   const provider = providerFor(account);
-  const checkIdentity = (session: AuthSession) => {
-    if (
-      session.providerId !== account.providerId ||
-      (account.session && session.accountId !== account.session.accountId)
-    ) {
-      throw new ProviderError('RESTRICTED', '登录身份与原账号不一致，请作为新账号添加');
-    }
-  };
-  checkIdentity(candidate);
+  assertAccountSessionIdentity(account, candidate);
   if (!account.selectedProfile) return candidate;
   const currentProfile = async (session: AuthSession) =>
     provider.getProfiles
@@ -62,7 +62,7 @@ export async function confirmAccountSession(
     if (!provider.selectProfile)
       throw new ProviderError('RESTRICTED', '当前学生与已保存学生不一致，请重新登录原学生');
     session = await provider.selectProfile(session, account.selectedProfile.id);
-    checkIdentity(session);
+    assertAccountSessionIdentity(account, session);
     if ((await currentProfile(session))?.id !== account.selectedProfile.id) {
       throw new ProviderError('RESTRICTED', '无法确认已选学生，请重新选择学生');
     }

@@ -130,13 +130,60 @@ it('rejects a different parent during relogin and keeps the old account', async 
   );
   expect((await accountStorage.load(previous.id))?.revision).toBe('r1');
 });
-it('rejects a different student when student switching is unavailable', async () => {
+it('requires explicit confirmation to replace a student and resets only student configuration', async () => {
+  await accountStorage.save({ ...previous, academicYear: 'fictional-year' });
+  attempt = await beginWebLogin({ id: previous.id, providerId: 'fictional', label: '' });
+  const nextProfile = { id: 'other-student', displayName: '虚构新学生', schoolName: '虚构学校' };
+  jest.mocked(provider.getProfile).mockResolvedValue(nextProfile);
+  await attempt.complete(message(attempt), 'https://www.zhixue.com/');
+  expect(attempt.previousProfile).toEqual(profile);
+  expect(attempt.requiresStudentReplacement).toBe(true);
+  await expect(attempt.commit()).rejects.toThrow('确认替换');
+  expect(await accountStorage.load(previous.id)).toMatchObject({
+    revision: 'r1',
+    selectedProfile: profile,
+    academicYear: 'fictional-year',
+  });
+  await attempt.commit({ replaceStudent: true });
+  const saved = await accountStorage.load(previous.id);
+  expect(saved).toMatchObject({
+    id: previous.id,
+    selectedProfile: nextProfile,
+    label: previous.label,
+  });
+  expect(saved?.academicYear).toBeUndefined();
+  expect(saved?.revision).not.toBe(previous.revision);
+});
+it('preserves the old student and settings when replacement is cancelled', async () => {
+  const original = { ...previous, academicYear: 'fictional-year' };
+  await accountStorage.save(original);
+  attempt = await beginWebLogin({ id: previous.id, providerId: 'fictional', label: '' });
+  jest.mocked(provider.getProfile).mockResolvedValue({ ...profile, id: 'other-student' });
+  await attempt.complete(message(attempt), 'https://www.zhixue.com/');
+  attempt.cancel();
+  await expect(attempt.commit({ replaceStudent: true })).rejects.toThrow('验证');
+  expect(await accountStorage.load(previous.id)).toEqual(original);
+});
+it('keeps the academic year when relogin returns the same student', async () => {
+  await accountStorage.save({ ...previous, academicYear: 'fictional-year' });
+  attempt = await beginWebLogin({ id: previous.id, providerId: 'fictional', label: '' });
+  await attempt.complete(message(attempt), 'https://www.zhixue.com/');
+  expect(attempt.requiresStudentReplacement).toBe(false);
+  await attempt.commit();
+  expect((await accountStorage.load(previous.id))?.academicYear).toBe('fictional-year');
+});
+it('rechecks the new student and concurrent edits before replacing', async () => {
   await accountStorage.save(previous);
   attempt = await beginWebLogin({ id: previous.id, providerId: 'fictional', label: '' });
   jest.mocked(provider.getProfile).mockResolvedValue({ ...profile, id: 'other-student' });
-  await expect(attempt.complete(message(attempt), 'https://www.zhixue.com/')).rejects.toThrow(
-    '学生',
-  );
+  await attempt.complete(message(attempt), 'https://www.zhixue.com/');
+  jest.mocked(provider.getProfile).mockResolvedValue({ ...profile, id: 'third-student' });
+  await expect(attempt.commit({ replaceStudent: true })).rejects.toThrow('学生已变化');
+  expect((await accountStorage.load(previous.id))?.selectedProfile).toEqual(profile);
+  jest.mocked(provider.getProfile).mockResolvedValue({ ...profile, id: 'other-student' });
+  await accountStorage.save({ ...previous, revision: 'edited' });
+  await expect(attempt.commit({ replaceStudent: true })).rejects.toThrow('变更');
+  expect((await accountStorage.load(previous.id))?.revision).toBe('edited');
 });
 it('refuses to overwrite an account edited after login started', async () => {
   await accountStorage.save(previous);

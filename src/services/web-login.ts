@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ProviderError, type LocalAccount } from '../domain/models';
 import { providerRegistry } from '../providers/registry';
 import { accountStorage } from '../storage/accounts';
-import { confirmAccountSession } from './accounts';
+import { assertAccountSessionIdentity } from './accounts';
 import { throwIfAborted } from './http';
 
 const messageSchema = z.object({
@@ -24,7 +24,12 @@ export function isAllowedLoginUrl(value: string, origins: readonly string[]): bo
 }
 
 export async function beginWebLogin(
-  input: { providerId: string; id?: string; label: string },
+  input: {
+    providerId: string;
+    id?: string;
+    label: string;
+    credentials?: { login: string; password: string };
+  },
   signal?: AbortSignal,
 ) {
   throwIfAborted(signal);
@@ -51,10 +56,20 @@ export async function beginWebLogin(
       throw new ProviderError('RESTRICTED', '账号已删除或平台已变更');
     let handling = false;
     let candidate: LocalAccount | undefined;
+    const requiresStudentReplacement = () =>
+      !!candidate &&
+      !!previous?.selectedProfile &&
+      candidate.selectedProfile?.id !== previous.selectedProfile.id;
     return {
       url: config.url,
       allowedOrigins: config.allowedOrigins,
-      script: config.script(attemptId),
+      script: config.script(attemptId, input.credentials),
+      get previousProfile() {
+        return previous?.selectedProfile;
+      },
+      get requiresStudentReplacement() {
+        return requiresStudentReplacement();
+      },
       cancel,
       async complete(raw: string, sourceUrl: string): Promise<LocalAccount | undefined> {
         if (
@@ -74,22 +89,25 @@ export async function beginWebLogin(
         if (!message.success || message.data.attemptId !== attemptId) return undefined;
         handling = true;
         try {
-          let session = await config.authenticate(message.data.payload);
+          const session = await config.authenticate(message.data.payload);
           if (session.providerId !== input.providerId)
             throw new ProviderError('RESTRICTED', '登录平台不匹配');
-          if (previous) session = await confirmAccountSession(previous, session);
+          if (previous) assertAccountSessionIdentity(previous, session);
           const profile = await provider.getProfile(session);
+          const studentChanged =
+            !!previous?.selectedProfile && previous.selectedProfile.id !== profile.id;
           // Empty exam lists are valid. Authentication must not require an exam.
           const account: LocalAccount = {
             id: previous?.id ?? Crypto.randomUUID(),
             revision: Crypto.randomUUID(),
             label: input.label.trim() || previous?.label || profile.displayName,
-            login: session.accountId,
+            login: input.credentials?.login.trim() || session.accountId,
             providerId: input.providerId,
             authMode: 'webview',
             session,
+            password: input.credentials?.password || previous?.password,
             selectedProfile: profile,
-            academicYear: previous?.academicYear,
+            academicYear: studentChanged ? undefined : previous?.academicYear,
           };
           if (!isActive()) throw new ProviderError('RESTRICTED', '登录已取消');
           candidate = account;
@@ -98,9 +116,11 @@ export async function beginWebLogin(
           handling = false;
         }
       },
-      async commit(): Promise<LocalAccount> {
+      async commit(options?: { replaceStudent?: boolean }): Promise<LocalAccount> {
         if (!candidate || !isActive() || handling)
           throw new ProviderError('RESTRICTED', '请先完成官方登录验证');
+        if (requiresStudentReplacement() && !options?.replaceStudent)
+          throw new ProviderError('RESTRICTED', '学生已变化，请核对新旧学生并确认替换');
         handling = true;
         try {
           const confirmed = await provider.getProfile(candidate.session!);

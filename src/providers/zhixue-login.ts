@@ -1,15 +1,39 @@
 /** Reads only the official current-student snapshot and report xToken.
  * No fetch interception, password access, CAPTCHA automation or credential logs.
  */
-export function zhixueLoginScript(attemptId: string): string {
+export function zhixueLoginScript(
+  attemptId: string,
+  credentials?: { login: string; password: string },
+): string {
   return `(function () {
     if (window.top !== window) return true;
     var attempt = ${JSON.stringify(attemptId)};
     var key = 'magicmirror.zhixue.login.' + attempt;
     var sent = '';
     var openingReport = false;
+    var credentials = ${JSON.stringify(credentials ?? null)};
+    var filled = false;
+    function fillCredentials() {
+      if (!credentials || filled || location.pathname.indexOf('/wap_login') !== 0) return;
+      var inputs = Array.prototype.slice.call(document.querySelectorAll('input'));
+      var account = inputs.find(function (input) {
+        return /account|username|user|login|手机号|账号/i.test((input.name || '') + ' ' + (input.id || '') + ' ' + (input.placeholder || ''));
+      });
+      var password = inputs.find(function (input) { return input.type === 'password'; });
+      if (!account || !password) return;
+      function setValue(input, value) {
+        var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      setValue(account, credentials.login);
+      setValue(password, credentials.password);
+      filled = true;
+    }
     function inspect() {
       try {
+        fillCredentials();
         var child = window.currentChild;
         if (location.pathname === '/container/container/parent/index/' && child && child.id && typeof child.name === 'string' && child.name.trim()) {
           sessionStorage.setItem(key, JSON.stringify({

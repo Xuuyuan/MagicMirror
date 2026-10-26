@@ -3,6 +3,7 @@ import { act, type ReactNode } from 'react';
 import AccountEdit from '../../app/account-edit';
 import { accountStorage } from '../storage/accounts';
 import { authenticateAccount } from '../services/accounts';
+import { takeWebLoginCredentials } from '../services/web-login-draft';
 
 type Root = { render: (element: ReactNode) => void; unmount: () => void };
 const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => Root }>(
@@ -266,17 +267,40 @@ it('submits the newly entered password during replacement', async () => {
   );
 });
 
-it('offers official web login without rendering native credentials for a web provider', async () => {
+it('requires credentials before official login and hands them off without route secrets', async () => {
   mockId = undefined;
   await render();
   await click('haofenshu-parent');
   await click('fictional-web');
-  expect(input('密码')).toBeNull();
-  expect(input('登录账号')).toBeNull();
+  expect(button('官方网页登录').disabled).toBe(true);
+  await fill('登录账号', 'fictional-web-login');
+  expect(button('官方网页登录').disabled).toBe(true);
+  await fill('密码', 'fictional-web-password');
   await click('官方网页登录');
   expect(mockPush).toHaveBeenCalledWith({
     pathname: '/official-login',
-    params: { providerId: 'fictional-web', label: '' },
+    params: { providerId: 'fictional-web', label: '', draft: expect.any(String) },
   });
+  const { draft } = mockPush.mock.calls[0][0].params;
+  expect(takeWebLoginCredentials(draft, 'fictional-web')).toEqual({
+    login: 'fictional-web-login',
+    password: 'fictional-web-password',
+  });
+  expect(takeWebLoginCredentials(draft, 'fictional-web')).toBeUndefined();
   expect(authenticateAccount).not.toHaveBeenCalled();
+  expect(mockSave).not.toHaveBeenCalled();
+});
+
+it('reuses a saved web password when reopening official login', async () => {
+  jest
+    .mocked(accountStorage.load)
+    .mockResolvedValue({ ...saved, revision: 'r1', providerId: 'fictional-web' });
+  await render();
+  expect(input('密码')).toBeNull();
+  await click('官方网页登录');
+  const { draft } = mockPush.mock.calls[0][0].params;
+  expect(takeWebLoginCredentials(draft, 'fictional-web')).toEqual({
+    login: saved.login,
+    password: saved.password,
+  });
 });
