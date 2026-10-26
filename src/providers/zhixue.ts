@@ -33,19 +33,27 @@ const envelopeSchema = z.object({ errorCode: z.number().int(), result: z.unknown
 const userSchema = z.object({
   userId: identifier,
   curChildId: identifier,
-  userType: z.literal('PARENT'),
+  userType: z.enum(['PARENT', 'STUDENT']),
 });
 const studentSchema = z.object({
   id: identifier,
   name: z.string().trim().min(1).max(128),
   schoolName: z.string().max(256).optional(),
 });
-const loginSchema = z.object({ token: z.string().min(1).max(16384), student: studentSchema });
+const loginSchema = z
+  .object({
+    token: z.string().min(1).max(16384),
+    student: studentSchema,
+    userType: z.enum(['PARENT', 'STUDENT']).default('PARENT'),
+    accountId: identifier.optional(),
+  })
+  .refine((value) => value.userType !== 'STUDENT' || !!value.accountId);
 const contextSchema = z.object({
   studentId: identifier,
   studentName: z.string().min(1),
   schoolName: z.string().optional(),
   host: z.string(),
+  userType: z.enum(['PARENT', 'STUDENT']).default('PARENT'),
 });
 const milliseconds = z
   .string()
@@ -274,7 +282,11 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
       ),
       '用户',
     );
-    if (user.userId !== session.accountId || user.curChildId !== data.studentId)
+    if (
+      user.userId !== session.accountId ||
+      user.curChildId !== data.studentId ||
+      user.userType !== data.userType
+    )
       throw new ProviderError('RESTRICTED', '智学网当前账号或学生已变化，请重新官方网页登录原学生');
     return data;
   }
@@ -431,6 +443,11 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
           await request(www, '/zhixuebao/base/common/getUserInfo', input.token),
           '用户',
         );
+        if (
+          user.userType !== input.userType ||
+          (input.accountId && user.userId !== input.accountId)
+        )
+          throw new ProviderError('RESTRICTED', '网页账号或身份与报告不一致，请重新官方网页登录');
         if (user.curChildId !== input.student.id)
           throw new ProviderError('RESTRICTED', '网页学生与报告学生不一致，请重新进入官方成绩报告');
         const route = parse(
@@ -449,6 +466,7 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
           accessToken: input.token,
           expiresAt: expiresAt(input.token),
           providerContext: {
+            userType: user.userType,
             studentId: user.curChildId,
             studentName: input.student.name,
             ...(input.student.schoolName ? { schoolName: input.student.schoolName } : {}),

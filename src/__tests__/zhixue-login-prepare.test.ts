@@ -63,9 +63,7 @@ it('logs out both official services before CAS redirects back to the mobile form
   expect(logout.pathname).toBe('/sso_alpha/logout');
   const login = new URL(logout.searchParams.get('service')!);
   expect(login.pathname).toBe('/wap_login.html');
-  expect(login.searchParams.get('nextpage')).toBe(
-    'https://www.zhixue.com/container/container/parent/index/',
-  );
+  expect(login.searchParams.get('nextpage')).toBe('https://www.zhixue.com/container/index');
   expect(test.postMessage).not.toHaveBeenCalled();
 });
 it.each(['network', 'unexpected-response', 'redirect'])(

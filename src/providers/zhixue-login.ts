@@ -38,7 +38,7 @@ export function zhixueLoginScript(
         .then(function () {
           if (stopped) return;
           var loginUrl = 'https://www.zhixue.com/wap_login.html?nextpage=' +
-            encodeURIComponent('https://www.zhixue.com/container/container/parent/index/');
+            encodeURIComponent('https://www.zhixue.com/container/index');
           // CAS redirects through its official central logout, then back to
           // the login form. Never clear the device-wide WebView cookie jar.
           location.replace('https://sso.zhixue.com/sso_alpha/logout?service=' + encodeURIComponent(loginUrl));
@@ -79,10 +79,18 @@ export function zhixueLoginScript(
       try {
         fillCredentials();
         var child = window.currentChild;
-        if (location.pathname === '/container/container/parent/index/' && child && child.id && typeof child.name === 'string' && child.name.trim()) {
+        var user = window.currentUser;
+        var parentPage = location.pathname === '/container/container/parent/index/' && (!user || user.role === 'parent');
+        var studentPage = location.pathname === '/container/container/student/index/' && user && user.role === 'student';
+        var profile = studentPage ? user : parentPage ? child : null;
+        if (profile && profile.id && typeof profile.name === 'string' && profile.name.trim()) {
           sessionStorage.setItem(key, JSON.stringify({
-            id: String(child.id), name: child.name,
-            schoolName: child.school && typeof child.school.schoolName === 'string' ? child.school.schoolName : undefined
+            student: {
+              id: String(profile.id), name: profile.name,
+              schoolName: !studentPage && child.school && typeof child.school.schoolName === 'string' ? child.school.schoolName : undefined
+            },
+            userType: studentPage ? 'STUDENT' : 'PARENT',
+            accountId: user && user.id ? String(user.id) : undefined
           }));
           // Keep the mobile UA. The official report app establishes its own
           // fresh token from the authenticated website session; no menu tap.
@@ -101,7 +109,7 @@ export function zhixueLoginScript(
         sent = token;
         window.ReactNativeWebView.postMessage(JSON.stringify({
           kind: 'official-session', attemptId: attempt,
-          payload: { token: token, student: JSON.parse(snapshot) }
+          payload: Object.assign({ token: token }, JSON.parse(snapshot))
         }));
       } catch (_) { /* No private values in errors or logs. */ }
     }

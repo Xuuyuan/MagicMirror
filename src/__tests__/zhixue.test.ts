@@ -130,6 +130,76 @@ it('rejects a mismatched current student and refuses password login', async () =
     code: 'UNSUPPORTED',
   });
 });
+it('authenticates a student and reuses the report chain with role-aware identity checks', async () => {
+  const studentUser = {
+    userId: 'fictional-self',
+    curChildId: 'fictional-self',
+    userType: 'STUDENT',
+  };
+  let currentUser = studentUser;
+  const { provider } = setup((url) => {
+    if (url.pathname.endsWith('/getUserInfo')) return { errorCode: 0, result: currentUser };
+    if (url.pathname.endsWith('/getUserExamList'))
+      return {
+        errorCode: 0,
+        result: {
+          examList: [exam(1)],
+          hasNextPage: false,
+          pagination: { pageIndex: 2, actualPosition: 0 },
+        },
+      };
+    if (url.pathname.endsWith('/getReportMain'))
+      return {
+        errorCode: 0,
+        result: {
+          paperList: [
+            { paperId: 'paper', subjectName: '虚构语文', userScore: 80, standardScore: 100 },
+          ],
+        },
+      };
+    if (url.pathname.endsWith('/checksheet/')) return { errorCode: 0, result: sheetFixture };
+  });
+  const studentPayload = {
+    token,
+    accountId: studentUser.userId,
+    userType: 'STUDENT',
+    student: { id: studentUser.curChildId, name: '虚构本人' },
+  };
+  const value = await provider.webLogin!.authenticate(studentPayload);
+  expect(value.providerContext?.userType).toBe('STUDENT');
+  expect(await provider.getProfile(value)).toMatchObject({
+    id: studentUser.curChildId,
+    displayName: '虚构本人',
+    schoolName: undefined,
+  });
+  expect(await provider.getAcademicYears!(value)).toHaveLength(2);
+  const list = await provider.getExamList(value, { academicYear: years[1].code });
+  const result = await provider.getExamResult(value, list[0].id);
+  expect(result.totalScore).toBe(80);
+  expect(await provider.getAnswerSheets!(value, list[0].id, 'paper', result)).toHaveLength(2);
+  currentUser = { ...studentUser, userType: 'PARENT' };
+  await expect(provider.getProfile(value)).rejects.toMatchObject({ code: 'RESTRICTED' });
+  currentUser = { ...studentUser, curChildId: 'fictional-other' };
+  await expect(provider.getProfile(value)).rejects.toMatchObject({ code: 'RESTRICTED' });
+  await expect(
+    provider.webLogin!.authenticate({ ...studentPayload, accountId: 'fictional-other' }),
+  ).rejects.toMatchObject({ code: 'RESTRICTED' });
+});
+it('rejects role mismatches and student snapshots without an explicit account identity', async () => {
+  const { provider } = setup();
+  await expect(
+    provider.webLogin!.authenticate({ ...payload, userType: 'STUDENT' }),
+  ).rejects.toMatchObject({ code: 'UNKNOWN' });
+  await expect(
+    provider.webLogin!.authenticate({ ...payload, userType: 'STUDENT', accountId: user.userId }),
+  ).rejects.toMatchObject({ code: 'RESTRICTED' });
+  await expect(
+    provider.getProfile({
+      ...session,
+      providerContext: { ...session.providerContext, userType: 'STUDENT' },
+    }),
+  ).rejects.toMatchObject({ code: 'RESTRICTED' });
+});
 it.each([
   'https://evil.test/',
   'http://www.zhixue.com/',
@@ -841,7 +911,7 @@ it('automatically opens the report after reading the parent student, then emits 
   expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
     kind: 'official-session',
     attemptId: 'fictional-attempt',
-    payload,
+    payload: { ...payload, userType: 'PARENT' },
   });
 });
 it.each(['/login.html', '/mobile_download.html', '/activitystudy/web-report/index.html'])(
@@ -898,7 +968,86 @@ it('waits for student metadata before automatically continuing from the parent p
   tick();
   expect(setItem).toHaveBeenCalledWith(
     'magicmirror.zhixue.login.fictional-attempt',
-    JSON.stringify({ id: user.curChildId, name: payload.student.name }),
+    JSON.stringify({
+      student: { id: user.curChildId, name: payload.student.name },
+      userType: 'PARENT',
+    }),
   );
   expect(replace).toHaveBeenCalledTimes(1);
 });
+it('bridges the student homepage using the logged-in student, not a child or masked report name', () => {
+  const storage = new Map<string, string>();
+  const postMessage = jest.fn();
+  const replace = jest.fn();
+  let tick = () => {};
+  const window = {
+    top: undefined as unknown,
+    currentUser: {
+      id: 'fictional-self',
+      name: '虚构本人',
+      role: 'student',
+      loginName: 'fictional-login',
+    },
+    currentChild: { id: 'stale-child', name: '虚构旧学生' },
+    ReactNativeWebView: { postMessage },
+    addEventListener: jest.fn(),
+  };
+  window.top = window;
+  const location = { pathname: '/container/container/student/index/', replace };
+  runInNewContext(zhixueLoginScript('fictional-student-attempt'), {
+    window,
+    location,
+    sessionStorage: {
+      setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key),
+    },
+    localStorage: { getItem: () => token },
+    setInterval: (callback: () => void) => {
+      tick = callback;
+    },
+    clearInterval: jest.fn(),
+  });
+  expect(replace).toHaveBeenCalledTimes(1);
+  expect(postMessage).not.toHaveBeenCalled();
+  location.pathname = '/activitystudy/web-report/index.html';
+  tick();
+  tick();
+  expect(postMessage).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(postMessage.mock.calls[0][0])).toEqual({
+    kind: 'official-session',
+    attemptId: 'fictional-student-attempt',
+    payload: {
+      token,
+      userType: 'STUDENT',
+      accountId: 'fictional-self',
+      student: { id: 'fictional-self', name: '虚构本人' },
+    },
+  });
+});
+it.each([
+  ['/container/container/student/index/', 'parent', '虚构姓名'],
+  ['/container/container/student/index/', 'student', ''],
+  ['/container/container/parent/index/', 'student', '虚构姓名'],
+])(
+  'does not infer an identity from an incompatible homepage %s / %s / %s',
+  (pathname, role, name) => {
+    const replace = jest.fn();
+    const setItem = jest.fn();
+    const window = {
+      top: undefined as unknown,
+      currentUser: { id: 'fictional-self', role, name },
+      currentChild: { id: 'fictional-child', name: '虚构孩子' },
+      addEventListener: jest.fn(),
+    };
+    window.top = window;
+    runInNewContext(zhixueLoginScript('fictional-attempt'), {
+      window,
+      location: { pathname, replace },
+      sessionStorage: { setItem },
+      setInterval: jest.fn(),
+      clearInterval: jest.fn(),
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(setItem).not.toHaveBeenCalled();
+  },
+);
