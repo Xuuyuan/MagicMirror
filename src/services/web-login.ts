@@ -6,11 +6,14 @@ import { accountStorage } from '../storage/accounts';
 import { assertAccountSessionIdentity } from './accounts';
 import { throwIfAborted } from './http';
 
-const messageSchema = z.object({
-  kind: z.literal('official-session'),
-  attemptId: z.string(),
-  payload: z.unknown(),
-});
+const messageSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('official-session'),
+    attemptId: z.string(),
+    payload: z.unknown(),
+  }),
+  z.object({ kind: z.literal('official-login-error'), attemptId: z.string() }),
+]);
 let activeAttempt: string | undefined;
 export function isAllowedLoginUrl(value: string, origins: readonly string[]): boolean {
   try {
@@ -87,6 +90,8 @@ export async function beginWebLogin(
           return undefined;
         }
         if (!message.success || message.data.attemptId !== attemptId) return undefined;
+        if (message.data.kind === 'official-login-error')
+          throw new ProviderError('NETWORK', '无法准备官方登录，请重新打开登录页后重试');
         handling = true;
         try {
           const session = await config.authenticate(message.data.payload);

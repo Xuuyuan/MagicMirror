@@ -414,10 +414,15 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
       throw new ProviderError('UNSUPPORTED', '智学网请使用官方网页登录并手动完成滑块');
     },
     webLogin: {
-      // The official login supports nextpage. Keep the parent container so the
-      // bridge can read currentChild and continue to the official report app.
-      url: `${www}/wap_login.html?nextpage=${encodeURIComponent(`${www}/container/container/parent/index/`)}`,
-      allowedOrigins: [www, 'https://ali-bg.zhixue.com'],
+      // Start on a script-free official status page before clearing only the
+      // official web sessions and returning through the official SSO logout.
+      url: `${www}/loginState/`,
+      allowedOrigins: [
+        www,
+        'https://ali-bg.zhixue.com',
+        'https://sso.zhixue.com',
+        'https://open.changyan.com',
+      ],
       script: zhixueLoginScript,
       async authenticate(payload) {
         const input = parse(loginSchema, payload, '登录材料');

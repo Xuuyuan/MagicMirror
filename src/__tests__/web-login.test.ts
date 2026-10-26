@@ -99,6 +99,14 @@ it('serializes WebView attempts without touching global cookies', async () => {
   attempt = await beginWebLogin({ providerId: 'fictional', label: '' });
   await expect(beginWebLogin({ providerId: 'fictional', label: '' })).rejects.toThrow('已有');
 });
+it('reports a scoped preparation error without authenticating or saving a session', async () => {
+  attempt = await beginWebLogin({ providerId: 'fictional', label: '' });
+  const raw = JSON.stringify({ kind: 'official-login-error', attemptId: attempt.script });
+  await expect(attempt.complete(raw, 'https://evil.test/')).resolves.toBeUndefined();
+  await expect(attempt.complete(raw, 'https://www.zhixue.com/')).rejects.toThrow('准备官方登录');
+  expect(provider.webLogin!.authenticate).not.toHaveBeenCalled();
+  await expect(attempt.commit()).rejects.toThrow('验证');
+});
 it('releases a pending attempt immediately when its screen unmounts', async () => {
   const controller = new AbortController();
   const pending = beginWebLogin(

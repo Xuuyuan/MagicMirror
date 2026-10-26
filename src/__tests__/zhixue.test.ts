@@ -88,12 +88,13 @@ afterEach(() => {
   setDiagnosticDebugMode(false);
   clearDiagnostics();
 });
-it('opens the official mobile login form and returns directly to the parent page', () => {
+it('prepares a fresh official login without globally clearing WebView cookies', () => {
   const { provider } = setup();
   const entry = new URL(provider.webLogin!.url);
   expect(entry.origin).toBe(www);
-  expect(entry.pathname).toBe('/wap_login.html');
-  expect(entry.searchParams.get('nextpage')).toBe(`${www}/container/container/parent/index/`);
+  expect(entry.pathname).toBe('/loginState/');
+  expect(provider.webLogin!.allowedOrigins).toContain('https://sso.zhixue.com');
+  expect(provider.webLogin!.allowedOrigins).toContain('https://open.changyan.com');
 });
 it('validates web session and profile without requiring exams, passwords or cookies', async () => {
   const { provider, transport } = setup();

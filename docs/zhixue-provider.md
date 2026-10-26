@@ -3,7 +3,7 @@
 ## 接入范围
 
 - 平台：智学网；官方入口 https://www.zhixue.com/。
-- 登录：官方 WebView 登录，由用户输入密码并完成滑块，不保存密码。
+- 登录：添加账号时输入账号密码，自动填充官方 WebView 登录页，由用户提交并完成验证；确认保存后凭据保存在 SecureStore。
 - 已实现：当前学生、官方学年、考试列表、主报告、近五次成绩变化、学科诊断雷达图、单科知识点说明、逐题得分与选择题答案、多页本人答题卡及逐题多区域作答预览。真实 Android 登录、布局与手势仍待设备验收。
 - 不提供官方精确排名；仅在人数比例规则得到确认时显示标明“预估”的排名范围，分数型或无法确认规则时隐藏，`capabilities.ranking` 保持 false。
 - 暂不开放绑定学生切换、逐题解析和空白试卷原卷；答题卡展示原始扫描图，不合成官网另行绘制的分数与批阅笔迹。
@@ -25,7 +25,9 @@
 
 使用 Provider 可选 `webLogin` 能力、`webview` 认证模式、官方登录页与带尝试标识的桥接验证服务。页面不渲染原生账号密码输入框；桥接接收来源、格式和长度均受限。家长/学生确认后才保存到 SecureStore，并比较登录开始时的 revision 和 Token，防止覆盖中途编辑的账号。恢复及同身份重新登录时核对原家长与已保存学生，无法确认时停止查询。取消和迟到消息不能提交，重复消息不会重复保存。新账号索引写入失败会清理孤立凭据记录。
 
-认证材料不进入路由参数或通用诊断。登录尝试串行执行。当前 Android WebView 依赖的 incognito 实现会调用全局 removeAllCookies，因此没有启用该属性，也不通过全局清 Cookie 假装隔离。仍可能复用系统 WebView 的官方站点登录态，保存前严格核对身份；新增账号需用户在官方页面确认身份。不同 WebView Cookie 容器隔离尚未实现。
+认证材料通过一次性内存交接，不进入路由参数或通用诊断。登录尝试串行执行。每次先打开没有自动跳转脚本的官方 `/loginState/` 页面，按官方 SSO 脚本使用 POST `action=logout` 退出 `/ssoservice.jsp` 与 `/container/ssoservice.jsp`，再打开 `https://sso.zhixue.com/sso_alpha/logout?service=...`，由官方跳转 `https://open.changyan.com/sso/logout`，返回带 `nextpage` 的手机登录页。准备失败会停止并提供重试，不继续识别旧账号。此操作退出智学网官网旧登录态；不清空其他平台 Cookie，也不删除已保存的本地账号。
+
+Android WebView 的 incognito 实现会调用全局 removeAllCookies，因此不启用该属性。这里实现的是每次重新进行官方登录，不是独立 Cookie 容器。2026-10-26 已核对官方公开 `container/sso.js` 的退出调用、两个服务的无登录态响应，以及 CAS 到中央退出再返回登录页的重定向；有旧 Cookie 的 Android 完整流程及官方退出对已保存报告 Token 的影响仍需设备验证。
 
 ## 学生、学年与报告
 
