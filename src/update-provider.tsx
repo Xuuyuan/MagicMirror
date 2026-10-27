@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Alert, Linking, Platform, ScrollView, View } from 'react-native';
+import { Linking, Platform, ScrollView, View } from 'react-native';
 import {
   ActivityIndicator,
   Button,
@@ -17,13 +17,16 @@ import {
   Portal,
   ProgressBar,
   Text,
+  useTheme,
 } from 'react-native-paper';
+import Markdown from 'react-native-markdown-display';
 import {
   checkForUpdate,
   downloadUpdate,
   getCurrentVersion,
   getInstallerUri,
   shouldPromptForRelease,
+  type UpdateReleaseNotes,
   type UpdateRelease,
 } from '@/src/services/updates';
 
@@ -36,6 +39,13 @@ const NOTES_MAX_HEIGHT = 140;
 type UpdateState = { ignoredVersion?: string };
 type UpdateContextValue = { checking: boolean; checkForUpdates: () => Promise<void> };
 const UpdateContext = createContext<UpdateContextValue | null>(null);
+
+function ReleaseNotes({ notes }: { notes: string }) {
+  const theme = useTheme();
+  return (
+    <Markdown style={{ body: { color: theme.colors.onSurface, fontSize: 14 } }}>{notes}</Markdown>
+  );
+}
 
 async function loadState(): Promise<UpdateState> {
   try {
@@ -74,7 +84,9 @@ export function useUpdates(): UpdateContextValue {
 export function UpdateProvider({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(false);
   const [release, setRelease] = useState<UpdateRelease>();
+  const [currentRelease, setCurrentRelease] = useState<UpdateReleaseNotes>();
   const [currentVersion, setCurrentVersion] = useState(getCurrentVersion());
+  const [latestVersion, setLatestVersion] = useState<string>();
   const [visible, setVisible] = useState(false);
   const [progress, setProgress] = useState<number>();
   const [error, setError] = useState<string>();
@@ -86,15 +98,20 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     running.current = true;
     setChecking(true);
     setError(undefined);
+    setLatestVersion(undefined);
     try {
       const result = await checkWithFallback();
       setCurrentVersion(result.currentVersion);
+      setCurrentRelease(result.currentRelease);
       if (!result.release) {
-        Alert.alert('检查更新', `当前已是最新版本 ${result.currentVersion}`);
+        setRelease(undefined);
+        setLatestVersion(result.currentVersion);
+        setVisible(true);
         return;
       }
       const state = await loadState();
       if (!shouldPromptForRelease(result.release.version, state.ignoredVersion, true)) return;
+      setLatestVersion(undefined);
       setRelease(result.release);
       setVisible(true);
     } catch (checkError) {
@@ -116,6 +133,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         const state = await loadState();
         if (shouldPromptForRelease(result.release.version, state.ignoredVersion)) {
           setCurrentVersion(result.currentVersion);
+          setCurrentRelease(result.currentRelease);
           setRelease(result.release);
           setVisible(true);
         }
@@ -135,6 +153,8 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     await saveState({ ignoredVersion: release.version });
     setVisible(false);
     setRelease(undefined);
+    setCurrentRelease(undefined);
+    setLatestVersion(undefined);
     setError(undefined);
   }
 
@@ -207,13 +227,26 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
             <Dialog.Title>
               {error
                 ? '更新失败'
-                : progress !== undefined && progress < 1
-                  ? '正在下载更新'
-                  : '发现新版本'}
+                : latestVersion
+                  ? '检查更新'
+                  : progress !== undefined && progress < 1
+                    ? '正在下载更新'
+                    : '发现新版本'}
             </Dialog.Title>
             <Dialog.Content>
               {error ? (
                 <Text>{error}</Text>
+              ) : latestVersion ? (
+                <View style={{ gap: 8 }}>
+                  <Text>当前已是最新版本 {latestVersion}</Text>
+                  <Divider />
+                  <Text>更新日志</Text>
+                  <Dialog.ScrollArea style={{ marginBottom: 0, paddingHorizontal: 0 }}>
+                    <ScrollView style={{ maxHeight: NOTES_MAX_HEIGHT }}>
+                      <ReleaseNotes notes={currentRelease?.notes ?? '暂无更新日志。'} />
+                    </ScrollView>
+                  </Dialog.ScrollArea>
+                </View>
               ) : release ? (
                 <View style={{ gap: 8 }}>
                   <Text>当前版本：{currentVersion}</Text>
@@ -222,7 +255,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
                   <Text>更新日志</Text>
                   <Dialog.ScrollArea style={{ marginBottom: 0, paddingHorizontal: 0 }}>
                     <ScrollView style={{ maxHeight: NOTES_MAX_HEIGHT }}>
-                      <Text>{release.notes}</Text>
+                      <ReleaseNotes notes={release.notes} />
                     </ScrollView>
                   </Dialog.ScrollArea>
                   {progress !== undefined ? (
@@ -252,10 +285,10 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
               {!error && !(progress !== undefined && progress < 1) ? (
                 <Button onPress={() => setVisible(false)}>关闭</Button>
               ) : null}
-              {!error && progress === undefined ? (
+              {!error && release && progress === undefined ? (
                 <Button onPress={() => void ignoreVersion()}>忽略本版本</Button>
               ) : null}
-              {!error && progress === undefined ? (
+              {!error && release && progress === undefined ? (
                 <Button
                   mode="contained"
                   style={{ minWidth: ACTION_MIN_WIDTH }}

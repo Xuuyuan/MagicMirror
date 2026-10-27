@@ -42,7 +42,18 @@ export type UpdateRelease = {
   checksum?: string;
 };
 
-export type UpdateCheckResult = { currentVersion: string; release?: UpdateRelease };
+export type UpdateReleaseNotes = {
+  version: string;
+  title: string;
+  notes: string;
+  publishedAt?: string;
+};
+
+export type UpdateCheckResult = {
+  currentVersion: string;
+  currentRelease?: UpdateReleaseNotes;
+  release?: UpdateRelease;
+};
 
 export function getCurrentVersion(): string {
   return appConfig.expo?.version ?? '0.0.0';
@@ -178,7 +189,18 @@ export async function checkForUpdate(
     .filter((release): release is UpdateRelease => !!release)
     .sort((a, b) => compareVersions(b.version, a.version));
   const latest = releases.find((release) => compareVersions(release.version, currentVersion) > 0);
-  return { currentVersion, release: latest };
+  const current = candidates.find(
+    (release) => compareVersions(stripPrefix(release.tag_name), currentVersion) === 0,
+  );
+  const currentRelease = current
+    ? {
+        version: stripPrefix(current.tag_name),
+        title: current.name?.trim() || current.tag_name,
+        notes: current.body?.trim() || '暂无更新日志。',
+        publishedAt: current.published_at ?? undefined,
+      }
+    : undefined;
+  return { currentVersion, currentRelease, release: latest };
 }
 
 function parseChecksum(text: string, assetName: string): string | undefined {
