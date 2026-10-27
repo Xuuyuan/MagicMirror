@@ -1,4 +1,7 @@
-jest.mock('expo-secure-store', () => ({ getItemAsync: jest.fn(), setItemAsync: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(),
+  setItemAsync: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('../services/diagnostics', () => ({ setDiagnosticDebugMode: jest.fn() }));
 
 async function freshStore(raw: string | null) {
@@ -9,10 +12,18 @@ async function freshStore(raw: string | null) {
   return { ...state, storage };
 }
 
-it.each([null, '{"theme":"dark"}', '{"showAbsentSubjects":"false","septnetGradeDisplay":"invalid"}', 'invalid json'])('缺失或无效偏好保留默认显示方式：%s', async raw => {
+it.each([
+  null,
+  '{"theme":"dark"}',
+  '{"showAbsentSubjects":"false","septnetGradeDisplay":"invalid"}',
+  'invalid json',
+])('缺失或无效偏好保留默认显示方式：%s', async (raw) => {
   const { useAppStore, hydratePreferences } = await freshStore(raw);
   await hydratePreferences();
-  expect(useAppStore.getState()).toMatchObject({ showAbsentSubjects: true, septnetGradeDisplay: 'both' });
+  expect(useAppStore.getState()).toMatchObject({
+    showAbsentSubjects: true,
+    septnetGradeDisplay: 'both',
+  });
 });
 
 it('修改偏好保存全部字段，重启后恢复，仍兼容主题设置', async () => {
@@ -23,7 +34,13 @@ it('修改偏好保存全部字段，重启后恢复，仍兼容主题设置', a
   const calls = jest.mocked(first.storage.setItemAsync).mock.calls;
   const [key, raw] = calls.at(-1)!;
   expect(key).toBe('magicmirror.ui.v1');
-  expect(JSON.parse(raw)).toEqual({ theme: 'dark', seedColor: '#123456', showAbsentSubjects: false, septnetGradeDisplay: 'percentile', dismissedNotices: [] });
+  expect(JSON.parse(raw)).toEqual({
+    theme: 'dark',
+    seedColor: '#123456',
+    showAbsentSubjects: false,
+    septnetGradeDisplay: 'percentile',
+    dismissedNotices: [],
+  });
   const second = await freshStore(raw);
   await second.hydratePreferences();
   expect(second.useAppStore.getState()).toMatchObject(JSON.parse(raw));

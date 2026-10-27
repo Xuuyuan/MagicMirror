@@ -3,8 +3,11 @@ import { QuestionScoreGroups } from '../question-score-groups';
 import type { QuestionScore, QuestionScoreSummary } from '../domain/models';
 import { flattenQuestions, isWrongQuestion } from '../services/subjects';
 import { zhixueQuestionAnswers, zhixueQuestions } from '../providers/zhixue-checksheet';
+import { v25Questions } from '../providers/zhixue-v25';
 
-const { renderToStaticMarkup } = jest.requireActual<{ renderToStaticMarkup: (element: ReactElement) => string }>('react-dom/server');
+const { renderToStaticMarkup } = jest.requireActual<{
+  renderToStaticMarkup: (element: ReactElement) => string;
+}>('react-dom/server');
 
 // 检查实际展示组件的内容；原生布局及触摸操作仍需设备验收。
 jest.mock('react-native', () => ({
@@ -16,14 +19,30 @@ jest.mock('react-native-paper', () => ({
 }));
 
 const summaries: QuestionScoreSummary[] = [
-  { kind: 'objective', score: 4, maxScore: 4 }, { kind: 'subjective', score: 0, maxScore: 6 },
+  { kind: 'objective', score: 4, maxScore: 4 },
+  { kind: 'subjective', score: 0, maxScore: 6 },
 ];
 const questions: QuestionScore[] = [
   { id: 'q1', label: '客观小题', kind: 'objective', score: 4, maxScore: 4 },
   { id: 'q2', label: '主观小题', kind: 'subjective', score: 0, maxScore: 6 },
 ];
+it('renders school averages from modern Zhixue answer data, including a genuine zero', () => {
+  const parsed = v25Questions({
+    answerInfoDTOList: [
+      { topicNumber: 1, dispTitle: '虚构小题1', score: 0, standardScore: 4, gradeAvgScore: 0 },
+      { topicNumber: 2, dispTitle: '虚构小题2', gradeAvgScore: 2.345 },
+      { topicNumber: 3, dispTitle: '虚构小题3' },
+    ],
+  });
+  const html = renderToStaticMarkup(<QuestionScoreGroups questions={parsed} />);
+  expect(html).toContain('校均 0');
+  expect(html).toContain('校均 2.35');
+  expect(html.match(/校均/g)).toHaveLength(2);
+});
 it('keeps both whole-subject summaries when wrong-only removes a group or all questions', () => {
-  const filtered = renderToStaticMarkup(<QuestionScoreGroups questions={questions.filter(isWrongQuestion)} summaries={summaries} />);
+  const filtered = renderToStaticMarkup(
+    <QuestionScoreGroups questions={questions.filter(isWrongQuestion)} summaries={summaries} />,
+  );
   expect(filtered).toContain('客观题（4/4）');
   expect(filtered).toContain('主观题（0/6）');
   expect(filtered).not.toContain('客观小题');
@@ -33,34 +52,69 @@ it('keeps both whole-subject summaries when wrong-only removes a group or all qu
   expect(empty).toContain('主观题（0/6）');
 });
 it('preserves unclassified questions alongside classified ones', () => {
-  const html = renderToStaticMarkup(<QuestionScoreGroups questions={[...questions, { id: 'q3', label: '未知题型小题' }]} />);
+  const html = renderToStaticMarkup(
+    <QuestionScoreGroups questions={[...questions, { id: 'q3', label: '未知题型小题' }]} />,
+  );
   expect(html).toContain('其它题目');
   expect(html).toContain('未知题型小题');
   expect(html).toContain('客观小题');
   expect(html).toContain('主观小题');
 });
 it('does not add group headings for providers without classification or summaries', () => {
-  const html = renderToStaticMarkup(<QuestionScoreGroups questions={[{ id: 'q1', label: '原有小题' }]} />);
+  const html = renderToStaticMarkup(
+    <QuestionScoreGroups questions={[{ id: 'q1', label: '原有小题' }]} />,
+  );
   expect(html).toContain('原有小题');
   expect(html).not.toContain('客观题');
   expect(html).not.toContain('主观题');
 });
 it('renders the actual zhixue parser output as objective, subjective and unclassified groups', () => {
-  const detail = zhixueQuestions({ showSingleTopicScore: true, sheetDatas: JSON.stringify({
-    userAnswerRecordDTO: { answerRecordDetails: [
-      { topicNumber: 1, dispTitle: '虚构选择题', score: 0, standardScore: 4, answerType: 's01Text', answer: 'B' },
-      { topicNumber: 2, dispTitle: '虚构解答题', score: 2, standardScore: 6, answerType: 's02Image' },
-      { topicNumber: 3, dispTitle: '虚构未知题型', score: 1, standardScore: 1 },
-    ] },
-    answerSheetLocationDTO: { pageSheets: [{ sections: [
-      { type: 'SingleChoice', contents: { branch: [{ ixList: [1] }] } },
-      { type: 'AnswerQuestion', contents: { branch: [{ ixList: [2] }] } },
-    ] }] },
-  }) });
-  const annotated = zhixueQuestionAnswers(detail.questions, JSON.stringify({ typeTopicAnalysis: [{ topicAnalysisDTOs: [
-    { topicNumber: 1, answerType: 's01Text', standardAnswer: 'A' },
-  ] }] }));
-  const html = renderToStaticMarkup(<QuestionScoreGroups questions={flattenQuestions(annotated.questions)} />);
+  const detail = zhixueQuestions({
+    showSingleTopicScore: true,
+    sheetDatas: JSON.stringify({
+      userAnswerRecordDTO: {
+        answerRecordDetails: [
+          {
+            topicNumber: 1,
+            dispTitle: '虚构选择题',
+            score: 0,
+            standardScore: 4,
+            answerType: 's01Text',
+            answer: 'B',
+          },
+          {
+            topicNumber: 2,
+            dispTitle: '虚构解答题',
+            score: 2,
+            standardScore: 6,
+            answerType: 's02Image',
+          },
+          { topicNumber: 3, dispTitle: '虚构未知题型', score: 1, standardScore: 1 },
+        ],
+      },
+      answerSheetLocationDTO: {
+        pageSheets: [
+          {
+            sections: [
+              { type: 'SingleChoice', contents: { branch: [{ ixList: [1] }] } },
+              { type: 'AnswerQuestion', contents: { branch: [{ ixList: [2] }] } },
+            ],
+          },
+        ],
+      },
+    }),
+  });
+  const annotated = zhixueQuestionAnswers(
+    detail.questions,
+    JSON.stringify({
+      typeTopicAnalysis: [
+        { topicAnalysisDTOs: [{ topicNumber: 1, answerType: 's01Text', standardAnswer: 'A' }] },
+      ],
+    }),
+  );
+  const html = renderToStaticMarkup(
+    <QuestionScoreGroups questions={flattenQuestions(annotated.questions)} />,
+  );
   expect(html).toContain('客观题');
   expect(html).toContain('主观题');
   expect(html).toContain('其它题目');

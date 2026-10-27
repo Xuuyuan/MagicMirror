@@ -53,11 +53,14 @@ describe('海豚阅卷 Provider 联网冒烟（只读）', () => {
     const subject = result.subjects[0];
     const detail = await provider.getSubjectDetail!(session, latest.id, subject.id!, result);
     expect(detail.subject).toBe(subject.subject);
-    console.log('[live] 科目明细完成', JSON.stringify({
-      questions: detail.questions?.length,
-      summaries: detail.questionScoreSummaries?.length,
-      statistics: detail.statistics?.length,
-    }));
+    console.log(
+      '[live] 科目明细完成',
+      JSON.stringify({
+        questions: detail.questions?.length,
+        summaries: detail.questionScoreSummaries?.length,
+        statistics: detail.statistics?.length,
+      }),
+    );
 
     const sheets = await provider.getAnswerSheets!(session, latest.id, subject.id!, result);
     console.log('[live] 答题卡完成');
@@ -70,20 +73,25 @@ describe('海豚阅卷 Provider 联网冒烟（只读）', () => {
     // 刷新链路：一次性 refreshToken 轮换后旧令牌作废，新令牌必须写回会话。
     const refreshed = await provider.refreshSession!(session);
     expect(refreshed.accessToken).not.toBe(session.accessToken);
-    expect(refreshed.providerContext?.['refreshToken']).not.toBe(session.providerContext?.['refreshToken']);
+    expect(refreshed.providerContext?.['refreshToken']).not.toBe(
+      session.providerContext?.['refreshToken'],
+    );
     expect(refreshed.providerContext?.['bindingId']).toBe(session.providerContext?.['bindingId']);
     const afterRefresh = await provider.getExamList(refreshed);
     expect(afterRefresh.length).toBeGreaterThan(0);
 
     // 只打印形状与计数，不打印姓名/学校/分数等真实数据。
-    console.log('[live] 通过', JSON.stringify({
-      context: Object.keys(session.providerContext ?? {}),
-      exams: list.length,
-      subjects: result.subjects.length,
-      hasTotal: typeof result.totalScore === 'number',
-      hasRanking: result.ranking !== undefined,
-      questions: detail.questions?.length ?? 0,
-      sheets: sheets.length,
-    }));
+    console.log(
+      '[live] 通过',
+      JSON.stringify({
+        context: Object.keys(session.providerContext ?? {}),
+        exams: list.length,
+        subjects: result.subjects.length,
+        hasTotal: typeof result.totalScore === 'number',
+        hasRanking: result.ranking !== undefined,
+        questions: detail.questions?.length ?? 0,
+        sheets: sheets.length,
+      }),
+    );
   });
 });

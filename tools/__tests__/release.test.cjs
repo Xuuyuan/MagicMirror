@@ -4,7 +4,11 @@ const { releaseInfo, releaseNotes, verifyVersionCode } = require('../release-met
 const { verifyBadging, parseNativeCode } = require('../verify-release-apk.cjs');
 
 function input(version = '1.0.0-beta.5', versionCode = 5) {
-  return [{ version, private: true }, { version, packages: { '': { version } } }, { expo: { version, android: { versionCode } } }];
+  return [
+    { version, private: true },
+    { version, packages: { '': { version } } },
+    { expo: { version, android: { versionCode } } },
+  ];
 }
 
 function variant(info, group) {
@@ -23,12 +27,14 @@ test('beta tags map to current changelog headings, stable versions remain stable
 });
 test('reject mismatched tags, lockfiles and Android version codes', () => {
   assert.throws(() => releaseInfo(...input(), 'v1.0.0-beta.4'));
-  const data = input(); data[1].packages[''].version = '1.0.0';
+  const data = input();
+  data[1].packages[''].version = '1.0.0';
   assert.throws(() => releaseInfo(...data, 'v1.0.0-beta.5'));
   assert.throws(() => releaseInfo(...input('1.0.0-beta.5', 0), 'v1.0.0-beta.5'));
 });
 test('extract exactly the requested changelog section', () => {
-  const text = '# Changes\r\n\r\n## 1.0.0_beta5 — today\r\n\r\n- New report\r\n\r\n## 1.0.0_beta4\r\n\r\n- Old report\r\n';
+  const text =
+    '# Changes\r\n\r\n## 1.0.0_beta5 — today\r\n\r\n- New report\r\n\r\n## 1.0.0_beta4\r\n\r\n- Old report\r\n';
   assert.equal(releaseNotes(text, '1.0.0_beta5'), '- New report\n');
   assert.throws(() => releaseNotes(text, '1.0.0_beta6'));
   assert.throws(() => releaseNotes(text + '\n## 1.0.0_beta5\n- Duplicate', '1.0.0_beta5'));
@@ -42,11 +48,14 @@ test('reject versionCode reuse or downgrade across published versions', () => {
 });
 test('name one APK per architecture group, keyed for the workflow outputs', () => {
   const info = releaseInfo(...input(), 'v1.0.0-beta.5');
-  assert.deepEqual(info.apks.map((apk) => apk.file), [
-    'MagicMirror-1.0.0-beta.5-arm64-v8a-signed.apk',
-    'MagicMirror-1.0.0-beta.5-x86_64-signed.apk',
-    'MagicMirror-1.0.0-beta.5-all-signed.apk',
-  ]);
+  assert.deepEqual(
+    info.apks.map((apk) => apk.file),
+    [
+      'MagicMirror-1.0.0-beta.5-arm64-v8a-signed.apk',
+      'MagicMirror-1.0.0-beta.5-x86_64-signed.apk',
+      'MagicMirror-1.0.0-beta.5-all-signed.apk',
+    ],
+  );
   assert.deepEqual(variant(info, 'all').abis, ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
 });
 test('accept the ABI set of each variant and reject a mismatch or a missing native-code', () => {
@@ -56,14 +65,29 @@ test('accept the ABI set of each variant and reject a mismatch or a missing nati
   const all = variant(info, 'all');
   assert.throws(() => verifyBadging(badging(all.abis), info, arm64.abis));
   assert.throws(() => verifyBadging(badging(arm64.abis), info, all.abis));
-  assert.throws(() => verifyBadging("package: name='com.magicmirror.app' versionCode='5' versionName='1.0.0-beta.5'\n", info, arm64.abis));
-  assert.deepEqual(parseNativeCode(badging(all.abis)), ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64']);
+  assert.throws(() =>
+    verifyBadging(
+      "package: name='com.magicmirror.app' versionCode='5' versionName='1.0.0-beta.5'\n",
+      info,
+      arm64.abis,
+    ),
+  );
+  assert.deepEqual(parseNativeCode(badging(all.abis)), [
+    'arm64-v8a',
+    'armeabi-v7a',
+    'x86',
+    'x86_64',
+  ]);
 });
 test('reject wrong package, wrong version or a debuggable build', () => {
   const info = releaseInfo(...input(), 'v1.0.0-beta.5');
   const abis = variant(info, 'arm64-v8a').abis;
   const text = badging(abis);
-  assert.throws(() => verifyBadging(text.replace('com.magicmirror.app', 'com.example.test'), info, abis));
-  assert.throws(() => verifyBadging(text.replace("versionCode='5'", "versionCode='4'"), info, abis));
+  assert.throws(() =>
+    verifyBadging(text.replace('com.magicmirror.app', 'com.example.test'), info, abis),
+  );
+  assert.throws(() =>
+    verifyBadging(text.replace("versionCode='5'", "versionCode='4'"), info, abis),
+  );
   assert.throws(() => verifyBadging(text + 'application-debuggable\n', info, abis));
 });

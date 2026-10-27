@@ -11,16 +11,49 @@ import { hydratePreferences, useAppStore } from '@/src/state/app';
 import { schemeColors } from '@/src/theme';
 import { ProviderError } from '@/src/domain/models';
 import { UpdateProvider } from '@/src/update-provider';
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: (failureCount, error) => failureCount < 1 && error instanceof ProviderError && error.retryable, staleTime: 60000 } } });
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) =>
+        failureCount < 1 && error instanceof ProviderError && error.retryable,
+      staleTime: 60000,
+    },
+  },
+});
 export function AppProviders() {
   const selected = useAppStore((s) => s.theme);
   const seedColor = useAppStore((s) => s.seedColor);
   const system = useColorScheme();
   const dark = selected === 'dark' || (selected === 'system' && system === 'dark');
-  useEffect(() => { void hydratePreferences(); }, []);
+  useEffect(() => {
+    void hydratePreferences();
+  }, []);
   const theme = useMemo(() => {
     const base = dark ? MD3DarkTheme : MD3LightTheme;
     return { ...base, colors: { ...base.colors, ...schemeColors(seedColor, dark) } };
   }, [seedColor, dark]);
-  return <SafeAreaProvider><PaperProvider theme={theme} settings={{ icon: (props) => <MaterialCommunityIcons {...props} /> }}><QueryClientProvider client={queryClient}><AccountsProvider><UpdateProvider><StatusBar style={dark ? 'light' : 'dark'} /><Stack screenOptions={{ headerShown: false, animation: 'fade', statusBarStyle: dark ? 'light' : 'dark', contentStyle: { backgroundColor: theme.colors.background } }} /></UpdateProvider></AccountsProvider></QueryClientProvider></PaperProvider></SafeAreaProvider>;
+  return (
+    <SafeAreaProvider>
+      <PaperProvider
+        theme={theme}
+        settings={{ icon: (props) => <MaterialCommunityIcons {...props} /> }}
+      >
+        <QueryClientProvider client={queryClient}>
+          <AccountsProvider>
+            <UpdateProvider>
+              <StatusBar style={dark ? 'light' : 'dark'} />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  animation: 'fade',
+                  statusBarStyle: dark ? 'light' : 'dark',
+                  contentStyle: { backgroundColor: theme.colors.background },
+                }}
+              />
+            </UpdateProvider>
+          </AccountsProvider>
+        </QueryClientProvider>
+      </PaperProvider>
+    </SafeAreaProvider>
+  );
 }

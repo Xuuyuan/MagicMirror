@@ -13,9 +13,15 @@ export function clearPlatformCookies(): Promise<void> {
     if (!Networking?.clearCookies) return Promise.resolve();
     return new Promise((resolve) => {
       let settled = false;
-      const finish = () => { if (settled) return; settled = true; resolve(); };
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
       Networking.clearCookies?.(finish);
       setTimeout(finish, 1500);
     });
-  } catch { /* 运行环境没有原生 Cookie 容器。 */ return Promise.resolve(); }
+  } catch {
+    /* 运行环境没有原生 Cookie 容器。 */ return Promise.resolve();
+  }
 }

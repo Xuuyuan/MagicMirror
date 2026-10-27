@@ -16,18 +16,100 @@ import { Screen, Header, Card, ErrorCard, LoadingState, backOrHome } from '@/src
 // 官方 WebJsInterface/CommonJsInterface 暴露给 H5 的桥接方法名（反编译 com/yunxiao/hfs/h5/WebJsInterface.java）。
 // 原型只实现数据类方法，其余用空实现兜底：页面直接调用未定义方法会抛 TypeError 并中断页面脚本。
 const officialBridgeMethods = [
-  'UMengEvent', 'UmengEventParams', 'adJump', 'aliPay', 'allowIndividuation', 'answerSheet', 'backPreviousPage', 'becomeSyVip', 'bindStudent', 'bossEvent',
-  'checkAppIsInstall', 'classTravel', 'coinDetail', 'coinPay', 'commitPointsTask', 'createExportTask', 'downloadHomework', 'downloadImage', 'downloadTiKuPaper', 'downloadXDBX',
-  'errorBook', 'export', 'exportErrorBook', 'feedDetailStat', 'feedLikeCount', 'feedLikeStat', 'finishPage', 'followFdWechat', 'followWechat', 'getRemainRight',
-  'goBack', 'hideNavigationBar', 'improveScore', 'improveScorePlan', 'improveScoreReport', 'launchBrowser', 'launchMarket', 'leftButton', 'loadFinish', 'loadImage',
-  'memberDetail', 'memberIntro', 'memberPay', 'myAssessment', 'myWallet', 'newMemberDetail', 'newMemberPay', 'onlineCustomer', 'onlineTutor', 'open',
-  'openBar', 'personalInfo', 'prizeActivity', 'psychoAssessment', 'questionAnalysis', 'reLogin', 'redirectLogin', 'resultReport', 'rightButton', 'saveImage',
-  'setShareBadgeUrl', 'setShareForecastScore', 'setTitle', 'setUserProfile', 'setting', 'shareContent', 'sharePage', 'shareRedPacket', 'showShare', 'simulationResult',
-  'subjectAnalysis', 'targetChange', 'toService', 'toServiceWithId', 'toShare', 'turnFeedColumn', 'turnLiveCourse', 'turnMiniProgram', 'turnPeriod', 'updateDegradePopup',
-  'updateUserInfo', 'upgradeFirst', 'upgradeFourth', 'upgradeSecond', 'upgradeThird', 'wakeQQ',
+  'UMengEvent',
+  'UmengEventParams',
+  'adJump',
+  'aliPay',
+  'allowIndividuation',
+  'answerSheet',
+  'backPreviousPage',
+  'becomeSyVip',
+  'bindStudent',
+  'bossEvent',
+  'checkAppIsInstall',
+  'classTravel',
+  'coinDetail',
+  'coinPay',
+  'commitPointsTask',
+  'createExportTask',
+  'downloadHomework',
+  'downloadImage',
+  'downloadTiKuPaper',
+  'downloadXDBX',
+  'errorBook',
+  'export',
+  'exportErrorBook',
+  'feedDetailStat',
+  'feedLikeCount',
+  'feedLikeStat',
+  'finishPage',
+  'followFdWechat',
+  'followWechat',
+  'getRemainRight',
+  'goBack',
+  'hideNavigationBar',
+  'improveScore',
+  'improveScorePlan',
+  'improveScoreReport',
+  'launchBrowser',
+  'launchMarket',
+  'leftButton',
+  'loadFinish',
+  'loadImage',
+  'memberDetail',
+  'memberIntro',
+  'memberPay',
+  'myAssessment',
+  'myWallet',
+  'newMemberDetail',
+  'newMemberPay',
+  'onlineCustomer',
+  'onlineTutor',
+  'open',
+  'openBar',
+  'personalInfo',
+  'prizeActivity',
+  'psychoAssessment',
+  'questionAnalysis',
+  'reLogin',
+  'redirectLogin',
+  'resultReport',
+  'rightButton',
+  'saveImage',
+  'setShareBadgeUrl',
+  'setShareForecastScore',
+  'setTitle',
+  'setUserProfile',
+  'setting',
+  'shareContent',
+  'sharePage',
+  'shareRedPacket',
+  'showShare',
+  'simulationResult',
+  'subjectAnalysis',
+  'targetChange',
+  'toService',
+  'toServiceWithId',
+  'toShare',
+  'turnFeedColumn',
+  'turnLiveCourse',
+  'turnMiniProgram',
+  'turnPeriod',
+  'updateDegradePopup',
+  'updateUserInfo',
+  'upgradeFirst',
+  'upgradeFourth',
+  'upgradeSecond',
+  'upgradeThird',
+  'wakeQQ',
 ] as const;
 
-function webViewScript(userInfo: Record<string, unknown>, cookie: string, debug: boolean, loginMode: boolean): string {
+function webViewScript(
+  userInfo: Record<string, unknown>,
+  cookie: string,
+  debug: boolean,
+  loginMode: boolean,
+): string {
   const userInfoJson = JSON.stringify(userInfo).replace(/</g, '\\u003c');
   const cookieJson = JSON.stringify(cookie).replace(/</g, '\\u003c');
   const stubNamesJson = JSON.stringify(officialBridgeMethods);
@@ -165,69 +247,182 @@ export default function HaofenshuWebView() {
   const account = accounts.find((item) => item.id === accountId);
   const [events, setEvents] = useState<string[]>([]);
   const handlingLoginToken = useRef(false);
-  const onMessage = useCallback((event: { nativeEvent: { data: string } }) => {
-    let message: { kind?: string; token?: unknown } | undefined;
-    try { message = JSON.parse(event.nativeEvent.data) as { kind?: string; token?: unknown }; } catch { /* 探针消息统一交给记录器处理。 */ }
-    if (loginMode && message?.kind === 'login-token' && typeof message.token === 'string' && account && !handlingLoginToken.current) {
-      const token = message.token;
-      handlingLoginToken.current = true;
-      void (async () => {
-        try {
-          const provider = providerRegistry.get(account.providerId);
-          if (!provider?.authenticateWithToken) throw new ProviderError('UNSUPPORTED', '该平台不支持官方网页登录会话');
-          const session = await provider.authenticateWithToken(token);
-          await provider.getExamList(session);
-          if (!await accountStorage.updateSession(account.id, account.revision, session)) throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载');
-          await queryClient.invalidateQueries({ queryKey: ['account', account.id, account.revision, 'exams'] });
-          backOrHome();
-        } catch (error) {
-          handlingLoginToken.current = false;
-          const summary = error instanceof ProviderError ? error.message : '官方网页登录会话验证失败';
-          setEvents((previous) => [...previous.slice(-19), summary]);
-        }
-      })();
-      return;
-    }
-    const summary = recordWebViewMessage(event.nativeEvent.data);
-    if (summary) setEvents((previous) => [...previous.slice(-19), summary]);
-  }, [loginMode, account, queryClient]);
+  const onMessage = useCallback(
+    (event: { nativeEvent: { data: string } }) => {
+      let message: { kind?: string; token?: unknown } | undefined;
+      try {
+        message = JSON.parse(event.nativeEvent.data) as { kind?: string; token?: unknown };
+      } catch {
+        /* 探针消息统一交给记录器处理。 */
+      }
+      if (
+        loginMode &&
+        message?.kind === 'login-token' &&
+        typeof message.token === 'string' &&
+        account &&
+        !handlingLoginToken.current
+      ) {
+        const token = message.token;
+        handlingLoginToken.current = true;
+        void (async () => {
+          try {
+            const provider = providerRegistry.get(account.providerId);
+            if (!provider?.authenticateWithToken)
+              throw new ProviderError('UNSUPPORTED', '该平台不支持官方网页登录会话');
+            const session = await provider.authenticateWithToken(token);
+            await provider.getExamList(session);
+            if (!(await accountStorage.updateSession(account.id, account.revision, session)))
+              throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载');
+            await queryClient.invalidateQueries({
+              queryKey: ['account', account.id, account.revision, 'exams'],
+            });
+            backOrHome();
+          } catch (error) {
+            handlingLoginToken.current = false;
+            const summary =
+              error instanceof ProviderError ? error.message : '官方网页登录会话验证失败';
+            setEvents((previous) => [...previous.slice(-19), summary]);
+          }
+        })();
+        return;
+      }
+      const summary = recordWebViewMessage(event.nativeEvent.data);
+      if (summary) setEvents((previous) => [...previous.slice(-19), summary]);
+    },
+    [loginMode, account, queryClient],
+  );
   // 对照实验模式：只加载官方 H5 登录页，由页面自行登录并创建会话，Provider 不参与任何凭据传递。
-  const loginEntry = useMemo(() => loginMode && account ? providerRegistry.get(account.providerId)?.getOfficialH5LoginEntry?.() : undefined, [loginMode, account]);
+  const loginEntry = useMemo(
+    () =>
+      loginMode && account
+        ? providerRegistry.get(account.providerId)?.getOfficialH5LoginEntry?.()
+        : undefined,
+    [loginMode, account],
+  );
   const query = useQuery({
     queryKey: ['account', accountId, account?.revision, 'official-h5-bootstrap'],
     enabled: !!accountId && !!account && !loginMode,
-    queryFn: ({ signal }) => withAccount(accountId!, async (provider, session, requestSignal) => {
-      if (!provider.getOfficialH5Bootstrap) throw new ProviderError('UNSUPPORTED', '该平台没有官方 H5 诊断入口');
-      if (signal.aborted || requestSignal?.aborted) throw new ProviderError('NETWORK', '请求已取消');
-      return provider.getOfficialH5Bootstrap(session);
-    }, signal),
+    queryFn: ({ signal }) =>
+      withAccount(
+        accountId!,
+        async (provider, session, requestSignal) => {
+          if (!provider.getOfficialH5Bootstrap)
+            throw new ProviderError('UNSUPPORTED', '该平台没有官方 H5 诊断入口');
+          if (signal.aborted || requestSignal?.aborted)
+            throw new ProviderError('NETWORK', '请求已取消');
+          return provider.getOfficialH5Bootstrap(session);
+        },
+        signal,
+      ),
   });
-  const bootstrap = useMemo(() => loginMode
-    ? loginEntry ? { url: loginEntry.url, userAgentSuffix: loginEntry.userAgentSuffix, cookie: '', userInfo: {} } : undefined
-    : query.data, [loginEntry, loginMode, query.data]);
-  const script = useMemo(() => bootstrap ? webViewScript(bootstrap.userInfo, bootstrap.cookie, debugMode && !loginMode, loginMode) : '', [bootstrap, debugMode, loginMode]);
-  if (!account) return <Screen><Header title="官方页面诊断" back /><Card><Text>账号不存在或已删除。</Text></Card></Screen>;
-  if (loginMode && !loginEntry) return <Screen><Header title="官方页面诊断" back /><Card><Text>该平台没有官方 H5 登录入口。</Text></Card></Screen>;
-  if (!loginMode && query.isPending) return <Screen><Header title="官方页面诊断" back /><LoadingState label="正在准备官方 H5 会话…" /></Screen>;
-  if (!loginMode && (query.error || !query.data)) return <Screen><Header title="官方页面诊断" back /><ErrorCard error={query.error} retry={() => void query.refetch()} accountId={account.id} /></Screen>;
-  if (!bootstrap) return <Screen><Header title="官方页面诊断" back /><Card><Text>启动参数不可用。</Text></Card></Screen>;
-  return <Screen><Header title={loginMode ? '官方网页登录' : '官方考试档案'} back />{loginMode ? <Text style={{ paddingHorizontal: 12, paddingVertical: 8 }}>请在官方页面登录当前账号。考试列表验证成功后会自动保存会话并关闭页面。</Text> : null}<WebView
-    source={bootstrap.cookie ? { uri: bootstrap.url, headers: { Cookie: bootstrap.cookie } } : { uri: bootstrap.url }}
-    applicationNameForUserAgent={bootstrap.userAgentSuffix}
-    injectedJavaScriptBeforeContentLoaded={script}
-    injectedJavaScript={script}
-    onMessage={onMessage}
-    javaScriptEnabled
-    domStorageEnabled
-    sharedCookiesEnabled
-    thirdPartyCookiesEnabled
-    setSupportMultipleWindows={false}
-    originWhitelist={['https://*', 'http://*']}
-    onNavigationStateChange={(state) => { if (!state.url.startsWith('https://mobile.haofenshu.com/')) backOrHome(); }}
-    style={{ flex: 1 }}
-  />
-  <View style={{ borderTopWidth: 1, borderTopColor: '#8884', paddingHorizontal: 12, paddingVertical: 6, maxHeight: 120 }}>
-    <ScrollView><Text variant="labelSmall">{events.length ? events.join('\n') : '等待页面探针…（打开页面后此处显示桥接调用与页面请求）'}</Text></ScrollView>
-  </View>
-</Screen>;
+  const bootstrap = useMemo(
+    () =>
+      loginMode
+        ? loginEntry
+          ? {
+              url: loginEntry.url,
+              userAgentSuffix: loginEntry.userAgentSuffix,
+              cookie: '',
+              userInfo: {},
+            }
+          : undefined
+        : query.data,
+    [loginEntry, loginMode, query.data],
+  );
+  const script = useMemo(
+    () =>
+      bootstrap
+        ? webViewScript(bootstrap.userInfo, bootstrap.cookie, debugMode && !loginMode, loginMode)
+        : '',
+    [bootstrap, debugMode, loginMode],
+  );
+  if (!account)
+    return (
+      <Screen>
+        <Header title="官方页面诊断" back />
+        <Card>
+          <Text>账号不存在或已删除。</Text>
+        </Card>
+      </Screen>
+    );
+  if (loginMode && !loginEntry)
+    return (
+      <Screen>
+        <Header title="官方页面诊断" back />
+        <Card>
+          <Text>该平台没有官方 H5 登录入口。</Text>
+        </Card>
+      </Screen>
+    );
+  if (!loginMode && query.isPending)
+    return (
+      <Screen>
+        <Header title="官方页面诊断" back />
+        <LoadingState label="正在准备官方 H5 会话…" />
+      </Screen>
+    );
+  if (!loginMode && (query.error || !query.data))
+    return (
+      <Screen>
+        <Header title="官方页面诊断" back />
+        <ErrorCard error={query.error} retry={() => void query.refetch()} accountId={account.id} />
+      </Screen>
+    );
+  if (!bootstrap)
+    return (
+      <Screen>
+        <Header title="官方页面诊断" back />
+        <Card>
+          <Text>启动参数不可用。</Text>
+        </Card>
+      </Screen>
+    );
+  return (
+    <Screen>
+      <Header title={loginMode ? '官方网页登录' : '官方考试档案'} back />
+      {loginMode ? (
+        <Text style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+          请在官方页面登录当前账号。考试列表验证成功后会自动保存会话并关闭页面。
+        </Text>
+      ) : null}
+      <WebView
+        source={
+          bootstrap.cookie
+            ? { uri: bootstrap.url, headers: { Cookie: bootstrap.cookie } }
+            : { uri: bootstrap.url }
+        }
+        applicationNameForUserAgent={bootstrap.userAgentSuffix}
+        injectedJavaScriptBeforeContentLoaded={script}
+        injectedJavaScript={script}
+        onMessage={onMessage}
+        javaScriptEnabled
+        domStorageEnabled
+        sharedCookiesEnabled
+        thirdPartyCookiesEnabled
+        setSupportMultipleWindows={false}
+        originWhitelist={['https://*', 'http://*']}
+        onNavigationStateChange={(state) => {
+          if (!state.url.startsWith('https://mobile.haofenshu.com/')) backOrHome();
+        }}
+        style={{ flex: 1 }}
+      />
+      <View
+        style={{
+          borderTopWidth: 1,
+          borderTopColor: '#8884',
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          maxHeight: 120,
+        }}
+      >
+        <ScrollView>
+          <Text variant="labelSmall">
+            {events.length
+              ? events.join('\n')
+              : '等待页面探针…（打开页面后此处显示桥接调用与页面请求）'}
+          </Text>
+        </ScrollView>
+      </View>
+    </Screen>
+  );
 }

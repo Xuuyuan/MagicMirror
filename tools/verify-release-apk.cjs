@@ -9,7 +9,11 @@ function parseNativeCode(text) {
 }
 
 function verifyBadging(text, info, expectedAbis) {
-  if (!text.includes("name='com.magicmirror.app'") || !text.includes(`versionCode='${info.versionCode}'`) || !text.includes(`versionName='${info.version}'`)) {
+  if (
+    !text.includes("name='com.magicmirror.app'") ||
+    !text.includes(`versionCode='${info.versionCode}'`) ||
+    !text.includes(`versionName='${info.version}'`)
+  ) {
     throw new Error('APK package/version does not match release metadata.');
   }
   if (/^application-debuggable/m.test(text)) {
@@ -18,13 +22,19 @@ function verifyBadging(text, info, expectedAbis) {
   const actual = parseNativeCode(text);
   const expected = [...expectedAbis].sort();
   if (actual.length !== expected.length || actual.some((abi, index) => abi !== expected[index])) {
-    throw new Error(`APK native-code must be exactly ${expected.join(', ')}, found ${actual.length ? actual.join(', ') : 'none'}.`);
+    throw new Error(
+      `APK native-code must be exactly ${expected.join(', ')}, found ${actual.length ? actual.join(', ') : 'none'}.`,
+    );
   }
 }
 
 function main() {
   const info = JSON.parse(fs.readFileSync('dist/release-metadata.json', 'utf8'));
-  const tools = path.join(process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT, 'build-tools', '36.0.0');
+  const tools = path.join(
+    process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT,
+    'build-tools',
+    '36.0.0',
+  );
   const executable = path.join(tools, process.platform === 'win32' ? 'aapt.exe' : 'aapt');
   const sums = [];
   for (const apk of info.apks) {

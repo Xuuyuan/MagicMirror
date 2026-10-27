@@ -16,7 +16,15 @@ import { requestWithTimeout } from '@/src/services/http';
 jest.mock('expo-crypto', () => ({
   CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
   digestStringAsync: async (_algorithm: string, value: string) =>
-    jest.requireActual<{ createHash: (algorithm: string) => { update: (value: string) => { digest: (encoding: string) => string } } }>('node:crypto').createHash('sha256').update(value).digest('hex'),
+    jest
+      .requireActual<{
+        createHash: (algorithm: string) => {
+          update: (value: string) => { digest: (encoding: string) => string };
+        };
+      }>('node:crypto')
+      .createHash('sha256')
+      .update(value)
+      .digest('hex'),
 }));
 
 const account = process.env.SEPTNET_ACCOUNT ?? '';
@@ -30,20 +38,31 @@ jest.setTimeout(120000);
 
 const live = account && password ? it : it.skip;
 async function bindingState(token: string) {
-  const response = await requestWithTimeout(fetch, 'https://szone-public.7net.cc/publicszoneui.service/UserService/info', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ token, version: '4.6.4' }).toString(),
-  });
-  const parsed = z.object({ status: z.union([z.string(), z.number()]),
-    data: z.object({ isWXBind: z.union([z.string(), z.number(), z.boolean()]) }) }).safeParse(await response.json());
-  if (!parsed.success || Number(parsed.data.status) !== 200) throw new Error('无法读取微信绑定状态，响应未输出');
+  const response = await requestWithTimeout(
+    fetch,
+    'https://szone-public.7net.cc/publicszoneui.service/UserService/info',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token, version: '4.6.4' }).toString(),
+    },
+  );
+  const parsed = z
+    .object({
+      status: z.union([z.string(), z.number()]),
+      data: z.object({ isWXBind: z.union([z.string(), z.number(), z.boolean()]) }),
+    })
+    .safeParse(await response.json());
+  if (!parsed.success || Number(parsed.data.status) !== 200)
+    throw new Error('无法读取微信绑定状态，响应未输出');
   return parsed.data.data.isWXBind;
 }
 
 describe('七天学堂 Provider 联网冒烟（只读）', () => {
   live('登录 → 学生信息 → 考试列表 → 一场成绩', async () => {
     const provider = createSeptnetProvider({ random });
-    const baseline = loginMethod === 'miniapp' ? await provider.authenticate(account, password) : undefined;
+    const baseline =
+      loginMethod === 'miniapp' ? await provider.authenticate(account, password) : undefined;
     const bindingBefore = baseline ? await bindingState(baseline.accessToken) : undefined;
     const baselineProfile = baseline ? await provider.getProfile(baseline) : undefined;
     const session = await provider.authenticateWithMethod!(account, password, loginMethod);
@@ -58,7 +77,7 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
     expect(profile.displayName.length).toBeGreaterThan(0);
     if (baselineProfile) {
       expect(profile.id === baselineProfile.id).toBe(true);
-      const unchanged = bindingBefore === await bindingState(session.accessToken);
+      const unchanged = bindingBefore === (await bindingState(session.accessToken));
       console.log('[live] 小程序登录前后微信绑定标志一致', unchanged);
       expect(unchanged).toBe(true);
       const oldSessionProfile = await provider.getProfile(baseline!);
@@ -88,31 +107,49 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
     }
 
     // 只打印形状与计数，不打印姓名/学校/分数等真实数据。
-    console.log('[live] 通过', JSON.stringify({
-      context: Object.keys(session.providerContext ?? {}),
-      hasProfileId: profile.id.length > 0,
-      exams: list.length,
-      viewableExams: list.filter((exam) => exam.hasResult).length,
-      subjects: result.subjects.length,
-      hasTotal: typeof result.totalScore === 'number',
-      hasPublishedAt: typeof result.publishedAt === 'string',
-      notice: result.notice?.id ?? null,
-      subjectFields: result.subjects.map((subject) => Object.keys(subject)),
-    }));
+    console.log(
+      '[live] 通过',
+      JSON.stringify({
+        context: Object.keys(session.providerContext ?? {}),
+        hasProfileId: profile.id.length > 0,
+        exams: list.length,
+        viewableExams: list.filter((exam) => exam.hasResult).length,
+        subjects: result.subjects.length,
+        hasTotal: typeof result.totalScore === 'number',
+        hasPublishedAt: typeof result.publishedAt === 'string',
+        notice: result.notice?.id ?? null,
+        subjectFields: result.subjects.map((subject) => Object.keys(subject)),
+      }),
+    );
 
     // 小程序接口面补充能力（原卷/作文/调试字段）：逐项独立校验，缺数据不算失败。
     const scorable = result.subjects.filter((subject) => subject.score !== undefined);
     const target = scorable.find((subject) => subject.subject === '语文') ?? scorable[0];
     if (target) {
-      const detail = await provider.getSubjectDetail!(session, result.examId, target.subject, result);
+      const detail = await provider.getSubjectDetail!(
+        session,
+        result.examId,
+        target.subject,
+        result,
+      );
       console.log('[live] 科目详情已返回', !!detail);
       if (provider.getAnswerSheets) {
-        const sheets = await provider.getAnswerSheets(session, result.examId, target.subject, result);
+        const sheets = await provider.getAnswerSheets(
+          session,
+          result.examId,
+          target.subject,
+          result,
+        );
         console.log('[live] 答题卡页数', sheets.length);
         for (const sheet of sheets) expect(sheet.url.startsWith('https://')).toBe(true);
       }
       if (provider.getWatermarkedAnswerSheets) {
-        const sheets = await provider.getWatermarkedAnswerSheets(session, result.examId, target.subject, result);
+        const sheets = await provider.getWatermarkedAnswerSheets(
+          session,
+          result.examId,
+          target.subject,
+          result,
+        );
         console.log('[live] 标注答题卡页数', sheets.length);
         for (const sheet of sheets) expect(sheet.url.startsWith('https://')).toBe(true);
       }
@@ -123,11 +160,23 @@ describe('七天学堂 Provider 联网冒烟（只读）', () => {
       }
       if (provider.getEssayDetail) {
         const essay = await provider.getEssayDetail(session, result.examId, target.subject, result);
-        console.log('[live] 作文数据', JSON.stringify({ hasPrompt: !!essay.prompt, promptLength: essay.prompt?.length ?? 0, answerSheets: essay.answerSheets.length }));
+        console.log(
+          '[live] 作文数据',
+          JSON.stringify({
+            hasPrompt: !!essay.prompt,
+            promptLength: essay.prompt?.length ?? 0,
+            answerSheets: essay.answerSheets.length,
+          }),
+        );
         for (const sheet of essay.answerSheets) expect(sheet.url.startsWith('https://')).toBe(true);
       }
       if (provider.getSubjectStatistics) {
-        const statistics = await provider.getSubjectStatistics(session, result.examId, target.subject, result);
+        const statistics = await provider.getSubjectStatistics(
+          session,
+          result.examId,
+          target.subject,
+          result,
+        );
         console.log('[live] 科目统计项数', statistics.length);
       }
     }

@@ -4,40 +4,65 @@ import { providerRegistry } from '@/src/providers/registry';
 import { accountStorage } from '@/src/storage/accounts';
 import { throwIfAborted } from '@/src/services/http';
 const recovery = new Map<string, Promise<AuthSession>>();
-function authenticatePassword(provider: NonNullable<ReturnType<typeof providerRegistry.get>>, login: string, password: string, method?: string) {
+function authenticatePassword(
+  provider: NonNullable<ReturnType<typeof providerRegistry.get>>,
+  login: string,
+  password: string,
+  method?: string,
+) {
   if (method === undefined) return provider.authenticate(login, password);
-  if (!provider.authenticateWithMethod || !provider.passwordLoginMethods?.some((item) => item.id === method)) {
+  if (
+    !provider.authenticateWithMethod ||
+    !provider.passwordLoginMethods?.some((item) => item.id === method)
+  ) {
     throw new ProviderError('UNSUPPORTED', '该平台不支持所选登录方式，请编辑账号');
   }
   return provider.authenticateWithMethod(login, password, method);
 }
-export function invalidateAccountQueries(queryClient: { removeQueries: (filters: { queryKey: string[] }) => unknown }, accountId: string): void {
+export function invalidateAccountQueries(
+  queryClient: { removeQueries: (filters: { queryKey: string[] }) => unknown },
+  accountId: string,
+): void {
   queryClient.removeQueries({ queryKey: ['account', accountId] });
 }
 function loginRequired(account: LocalAccount): ProviderError {
-  if (account.authMode === 'webview') return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新使用官方网页登录并完成验证');
-  return account.authMode === 'token' || (!account.password && providerFor(account).authenticateWithToken)
+  if (account.authMode === 'webview')
+    return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新使用官方网页登录并完成验证');
+  return account.authMode === 'token' ||
+    (!account.password && providerFor(account).authenticateWithToken)
     ? new ProviderError('SESSION_EXPIRED', 'Token 已失效，请编辑账号并输入新的 Token')
     : new ProviderError('INVALID_CREDENTIALS', '登录已失效，未保存可用凭据，请重新登录');
 }
-function providerFor(account: LocalAccount) { const provider = providerRegistry.get(account.providerId); if (!provider) throw new ProviderError('UNSUPPORTED', '该账号的平台不可用，请编辑账号'); return provider; }
-export async function confirmAccountSession(account: LocalAccount, candidate: AuthSession): Promise<AuthSession> {
+function providerFor(account: LocalAccount) {
+  const provider = providerRegistry.get(account.providerId);
+  if (!provider) throw new ProviderError('UNSUPPORTED', '该账号的平台不可用，请编辑账号');
+  return provider;
+}
+export function assertAccountSessionIdentity(account: LocalAccount, session: AuthSession): void {
+  if (
+    session.providerId !== account.providerId ||
+    (account.session && session.accountId !== account.session.accountId)
+  ) {
+    throw new ProviderError('RESTRICTED', '登录身份与原账号不一致，请作为新账号添加');
+  }
+}
+export async function confirmAccountSession(
+  account: LocalAccount,
+  candidate: AuthSession,
+): Promise<AuthSession> {
   const provider = providerFor(account);
-  const checkIdentity = (session: AuthSession) => {
-    if (session.providerId !== account.providerId || (account.session && session.accountId !== account.session.accountId)) {
-      throw new ProviderError('RESTRICTED', '登录身份与原账号不一致，请作为新账号添加');
-    }
-  };
-  checkIdentity(candidate);
+  assertAccountSessionIdentity(account, candidate);
   if (!account.selectedProfile) return candidate;
-  const currentProfile = async (session: AuthSession) => provider.getProfiles
-    ? (await provider.getProfiles(session)).find((profile) => profile.selected)
-    : provider.getProfile(session);
+  const currentProfile = async (session: AuthSession) =>
+    provider.getProfiles
+      ? (await provider.getProfiles(session)).find((profile) => profile.selected)
+      : provider.getProfile(session);
   let session = candidate;
   if ((await currentProfile(session))?.id !== account.selectedProfile.id) {
-    if (!provider.selectProfile) throw new ProviderError('RESTRICTED', '当前学生与已保存学生不一致，请重新登录原学生');
+    if (!provider.selectProfile)
+      throw new ProviderError('RESTRICTED', '当前学生与已保存学生不一致，请重新登录原学生');
     session = await provider.selectProfile(session, account.selectedProfile.id);
-    checkIdentity(session);
+    assertAccountSessionIdentity(account, session);
     if ((await currentProfile(session))?.id !== account.selectedProfile.id) {
       throw new ProviderError('RESTRICTED', '无法确认已选学生，请重新选择学生');
     }
@@ -52,70 +77,180 @@ async function restore(account: LocalAccount): Promise<AuthSession> {
     const provider = providerFor(account);
     let session: AuthSession | undefined;
     if (account.session && provider.refreshSession) {
-      try { session = await provider.refreshSession(account.session); }
-      catch (error) { if (!(error instanceof ProviderError) || error.code !== 'SESSION_EXPIRED') throw error; }
+      try {
+        session = await provider.refreshSession(account.session);
+      } catch (error) {
+        if (!(error instanceof ProviderError) || error.code !== 'SESSION_EXPIRED') throw error;
+      }
     }
     if (!session) {
       if (!account.password) throw loginRequired(account);
-      session = await authenticatePassword(provider, account.login, account.password, account.loginMethod);
+      session = await authenticatePassword(
+        provider,
+        account.login,
+        account.password,
+        account.loginMethod,
+      );
     }
     session = await confirmAccountSession(account, session);
-    if (!await accountStorage.updateSession(account.id, account.revision, session, account.session?.accessToken)) {
+    if (
+      !(await accountStorage.updateSession(
+        account.id,
+        account.revision,
+        session,
+        account.session?.accessToken,
+      ))
+    ) {
       throw new ProviderError('SESSION_EXPIRED', '账号配置或会话已变更，请重新加载');
     }
     return session;
   })();
   recovery.set(identity, promise);
-  try { return await promise; } finally { recovery.delete(identity); }
+  try {
+    return await promise;
+  } finally {
+    recovery.delete(identity);
+  }
 }
-export async function withAccount<T>(id: string, operation: (provider: ReturnType<typeof providerFor>, session: AuthSession, signal?: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> { throwIfAborted(signal); const account = await accountStorage.load(id); if (!account) throw new ProviderError('NOT_FOUND', '账号已删除，请选择其他账号'); const provider = providerFor(account); if (!account.session || (account.session.expiresAt !== undefined && account.session.expiresAt <= Date.now())) return operation(provider, await restore(account), signal); try { return await operation(provider, account.session, signal); } catch (error) { throwIfAborted(signal); if (!(error instanceof ProviderError) || error.code !== 'SESSION_EXPIRED') throw error; const latest = await accountStorage.load(id); if (!latest || latest.revision !== account.revision) throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载'); if (latest.session?.accessToken === account.session.accessToken) { if (!await accountStorage.updateSession(id, latest.revision, { ...latest.session, expiresAt: 0 }, account.session.accessToken)) throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载'); } const recovered = latest.session && latest.session.accessToken !== account.session.accessToken ? latest.session : await restore(latest); return operation(provider, recovered, signal); } }
-export async function authenticateAccount(input: { id?: string; label: string; providerId: string; login: string; password?: string; token?: string; loginMethod?: string }): Promise<LocalAccount> {
+export async function withAccount<T>(
+  id: string,
+  operation: (
+    provider: ReturnType<typeof providerFor>,
+    session: AuthSession,
+    signal?: AbortSignal,
+  ) => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  throwIfAborted(signal);
+  const account = await accountStorage.load(id);
+  if (!account) throw new ProviderError('NOT_FOUND', '账号已删除，请选择其他账号');
+  const provider = providerFor(account);
+  if (
+    !account.session ||
+    (account.session.expiresAt !== undefined && account.session.expiresAt <= Date.now())
+  )
+    return operation(provider, await restore(account), signal);
+  try {
+    return await operation(provider, account.session, signal);
+  } catch (error) {
+    throwIfAborted(signal);
+    if (!(error instanceof ProviderError) || error.code !== 'SESSION_EXPIRED') throw error;
+    const latest = await accountStorage.load(id);
+    if (!latest || latest.revision !== account.revision)
+      throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载');
+    if (latest.session?.accessToken === account.session.accessToken) {
+      if (
+        !(await accountStorage.updateSession(
+          id,
+          latest.revision,
+          { ...latest.session, expiresAt: 0 },
+          account.session.accessToken,
+        ))
+      )
+        throw new ProviderError('SESSION_EXPIRED', '账号配置已变更，请重新加载');
+    }
+    const recovered =
+      latest.session && latest.session.accessToken !== account.session.accessToken
+        ? latest.session
+        : await restore(latest);
+    return operation(provider, recovered, signal);
+  }
+}
+export async function authenticateAccount(input: {
+  id?: string;
+  label: string;
+  providerId: string;
+  login: string;
+  password?: string;
+  token?: string;
+  loginMethod?: string;
+}): Promise<LocalAccount> {
   const previous = input.id ? await accountStorage.load(input.id) : null;
   const provider = providerRegistry.get(input.providerId);
   if (!provider) throw new ProviderError('UNSUPPORTED', '请选择可用平台');
   const tokenMode = input.token !== undefined;
   const login = input.login.trim();
-  const password = tokenMode ? undefined : input.password || (previous?.providerId === input.providerId && previous.login === login ? previous.password : undefined);
+  const password = tokenMode
+    ? undefined
+    : input.password ||
+      (previous?.providerId === input.providerId && previous.login === login
+        ? previous.password
+        : undefined);
   let session: AuthSession;
   if (tokenMode) {
-    if (!provider.authenticateWithToken) throw new ProviderError('UNSUPPORTED', '该平台不支持 Token 登录');
+    if (!provider.authenticateWithToken)
+      throw new ProviderError('UNSUPPORTED', '该平台不支持 Token 登录');
     session = await provider.authenticateWithToken(input.token ?? '');
   } else {
     if (!password) throw new ProviderError('INVALID_CREDENTIALS', '请输入密码以重新登录');
     session = await authenticatePassword(provider, login, password, input.loginMethod);
   }
-  if (session.providerId !== input.providerId) throw new ProviderError('UNKNOWN', '平台返回了不匹配的登录状态');
+  if (session.providerId !== input.providerId)
+    throw new ProviderError('UNKNOWN', '平台返回了不匹配的登录状态');
   if (previous?.providerId === input.providerId && previous.login === login) {
     session = await confirmAccountSession(previous, session);
   }
   const profiles = provider.getProfiles ? await provider.getProfiles(session) : undefined;
   const selectedProfile = profiles?.find((profile) => profile.selected);
-  return { id: input.id ?? Crypto.randomUUID(), revision: Crypto.randomUUID(), label: input.label.trim() || login || session.accountId, providerId: input.providerId, login: login || session.accountId, authMode: tokenMode ? 'token' : 'password', loginMethod: tokenMode ? undefined : input.loginMethod ?? provider.passwordLoginMethods?.[0]?.id, password, session, selectedProfile };
+  return {
+    id: input.id ?? Crypto.randomUUID(),
+    revision: Crypto.randomUUID(),
+    label: input.label.trim() || login || session.accountId,
+    providerId: input.providerId,
+    login: login || session.accountId,
+    authMode: tokenMode ? 'token' : 'password',
+    loginMethod: tokenMode
+      ? undefined
+      : (input.loginMethod ?? provider.passwordLoginMethods?.[0]?.id),
+    password,
+    session,
+    selectedProfile,
+  };
 }
 
 export async function selectAccountProfile(accountId: string, profileId: string): Promise<void> {
   const account = await accountStorage.load(accountId);
   if (!account) throw new ProviderError('NOT_FOUND', '账号已删除，请选择其他账号');
   const provider = providerFor(account);
-  if (!provider.getProfiles || !provider.selectProfile) throw new ProviderError('UNSUPPORTED', '该平台不支持切换学生');
+  if (!provider.getProfiles || !provider.selectProfile)
+    throw new ProviderError('UNSUPPORTED', '该平台不支持切换学生');
   // Only authentication recovery is replayable. A remote selection may already
   // have succeeded when its response is lost, so never replay the mutation.
   const current = await withAccount(accountId, async (_provider, session) => session);
   const latest = await accountStorage.load(accountId);
-  if (!latest || latest.revision !== account.revision || latest.session?.accessToken !== current.accessToken) {
+  if (
+    !latest ||
+    latest.revision !== account.revision ||
+    latest.session?.accessToken !== current.accessToken
+  ) {
     throw new ProviderError('RESTRICTED', '账号配置已变更，请重新加载后切换');
   }
   try {
     const session = await provider.selectProfile!(current, profileId);
-    const selected = (await provider.getProfiles!(session)).find((profile) => profile.id === profileId && profile.selected);
+    const selected = (await provider.getProfiles!(session)).find(
+      (profile) => profile.id === profileId && profile.selected,
+    );
     if (!selected) throw new ProviderError('NOT_FOUND', '未找到该绑定学生');
-    if (!await accountStorage.selectProfile(accountId, account.revision, current.accessToken, session, selected)) {
+    if (
+      !(await accountStorage.selectProfile(
+        accountId,
+        account.revision,
+        current.accessToken,
+        session,
+        selected,
+      ))
+    ) {
       throw new ProviderError('RESTRICTED', '账号配置已变更，请重新加载后切换');
     }
   } catch (error) {
     // The remote current student can be uncertain after any failed mutation.
     // Stop reads until recovery has confirmed the saved student again.
-    await accountStorage.updateSession(accountId, account.revision, { ...current, expiresAt: 0 }, current.accessToken);
+    await accountStorage.updateSession(
+      accountId,
+      account.revision,
+      { ...current, expiresAt: 0 },
+      current.accessToken,
+    );
     throw error;
   }
 }

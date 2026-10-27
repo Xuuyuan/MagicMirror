@@ -1,0 +1,15 @@
+{
+  "singleQuote": true,
+  "printWidth": 100,
+  "trailingComma": "all",
+  "endOfLine": "auto",
+  "embeddedLanguageFormatting": "off",
+  "overrides": [
+    {
+      "files": "__mocks__/expo-crypto.js",
+      "options": {
+        "parser": "babel-ts"
+      }
+    }
+  ]
+}

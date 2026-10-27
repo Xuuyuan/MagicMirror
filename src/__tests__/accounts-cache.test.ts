@@ -1,7 +1,11 @@
 import { invalidateAccountQueries } from '@/src/services/accounts';
 import { QueryClient } from '@tanstack/react-query';
 jest.mock('expo-crypto', () => ({ randomUUID: jest.fn(() => 'fictional-uuid') }));
-jest.mock('expo-secure-store', () => ({ setItemAsync: jest.fn(), getItemAsync: jest.fn(async () => null), deleteItemAsync: jest.fn() }));
+jest.mock('expo-secure-store', () => ({
+  setItemAsync: jest.fn(),
+  getItemAsync: jest.fn(async () => null),
+  deleteItemAsync: jest.fn(),
+}));
 
 it('isolates refresh and account switching caches by account id', () => {
   const queryClient = new QueryClient();

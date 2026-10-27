@@ -13,13 +13,39 @@ export function DiagnosticButton() {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
-      await Clipboard.setStringAsync(JSON.stringify({ build: diagnosticBuild, appVersion: Constants.expoConfig?.version, os: Platform.OS, osVersion: Platform.Version, events: diagnosticSnapshot() }, null, 2));
+      await Clipboard.setStringAsync(
+        JSON.stringify(
+          {
+            build: diagnosticBuild,
+            appVersion: Constants.expoConfig?.version,
+            os: Platform.OS,
+            osVersion: Platform.Version,
+            events: diagnosticSnapshot(),
+          },
+          null,
+          2,
+        ),
+      );
       setCopied(true);
-    } catch { setCopied(false); }
+    } catch {
+      setCopied(false);
+    }
   }
   if (!debugMode) return null;
-  return <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
-    <Button icon="content-copy" onPress={() => void copy()}>{copied ? '已复制调试信息' : '复制调试信息'}</Button>
-    <Button icon="delete-outline" onPress={() => { clearDiagnostics(); setCopied(false); }}>清除调试信息</Button>
-  </View>;
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+      <Button icon="content-copy" onPress={() => void copy()}>
+        {copied ? '已复制调试信息' : '复制调试信息'}
+      </Button>
+      <Button
+        icon="delete-outline"
+        onPress={() => {
+          clearDiagnostics();
+          setCopied(false);
+        }}
+      >
+        清除调试信息
+      </Button>
+    </View>
+  );
 }

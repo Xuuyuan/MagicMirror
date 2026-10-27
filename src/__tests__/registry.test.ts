@@ -3,7 +3,8 @@ import { capabilitiesSchema } from '@/src/domain/models';
 
 describe('provider contracts', () => {
   it('registers real providers and capabilities', () => {
-    for (const provider of providerRegistry.list()) expect(capabilitiesSchema.parse(provider.capabilities).results).toBe(true);
+    for (const provider of providerRegistry.list())
+      expect(capabilitiesSchema.parse(provider.capabilities).results).toBe(true);
     expect(providerRegistry.get('mock')).toBeUndefined();
   });
 

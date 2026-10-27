@@ -6,8 +6,13 @@ import Subject from '../../app/subject';
 import { QuestionImagePreview } from '../question-image-preview';
 import type { AnswerSheet, ExamResult, SubjectDetail, SubjectStatistic } from '../domain/models';
 import { distributionSection, essaySection } from '../providers/septnet-report';
-import { zhixueDiagnosisSection, zhixueKnowledgeSection, zhixueTrendSections } from '../providers/zhixue-report';
+import {
+  zhixueDiagnosisSection,
+  zhixueKnowledgeSection,
+  zhixueTrendSections,
+} from '../providers/zhixue-report';
 import { useAppStore } from '../state/app';
+import { balanceSection } from '../providers/zhixue-v25';
 import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
 import type { GradeDisplayMode } from '../services/score-display';
@@ -15,32 +20,77 @@ import type { GradeDisplayMode } from '../services/score-display';
 jest.mock('../academic-year-picker', () => ({ AcademicYearPicker: () => null }));
 
 type Root = { render: (element: ReactNode) => void; unmount: () => void };
-const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => Root }>('react-dom/client');
+const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => Root }>(
+  'react-dom/client',
+);
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const mockPush = jest.fn();
 let mockProviderId = 'septnet';
 let mockRouteExamName: string | undefined;
-const mockSubject: SubjectDetail = { subjectId: 'fictional-subject', subject: '化学', score: 65, maxScore: 100, grade: 'B4', providerContext: { originalScore: '20', scaledScore: '65', gradePercentile: '36-43%' } };
-const mockResult: ExamResult = {
-  examId: 'fictional-exam', examName: '虚构考试', totalScore: 65, originalTotalScore: 20, maxTotalScore: 200,
-  subjects: [{ subject: '生物', status: 'absent' }, mockSubject, { subject: '历史', status: 'absent' }, { subject: '数学', score: 0 }],
+const mockSubject: SubjectDetail = {
+  subjectId: 'fictional-subject',
+  subject: '化学',
+  score: 65,
+  maxScore: 100,
+  grade: 'B4',
+  providerContext: { originalScore: '20', scaledScore: '65', gradePercentile: '36-43%' },
 };
-jest.mock('expo-router', () => ({ router: { push: (...args: unknown[]) => mockPush(...args) }, useLocalSearchParams: () => ({ accountId: 'fictional', examId: 'fictional-exam', subjectId: '化学', subject: '化学', examName: mockRouteExamName }) }));
-jest.mock('../accounts-context', () => ({ useAccounts: () => ({ accounts: [{ id: 'fictional', revision: 'r1', providerId: mockProviderId }] }) }));
+const mockResult: ExamResult = {
+  examId: 'fictional-exam',
+  examName: '虚构考试',
+  totalScore: 65,
+  originalTotalScore: 20,
+  maxTotalScore: 200,
+  subjects: [
+    { subject: '生物', status: 'absent' },
+    mockSubject,
+    { subject: '历史', status: 'absent' },
+    { subject: '数学', score: 0 },
+  ],
+};
+jest.mock('expo-router', () => ({
+  router: { push: (...args: unknown[]) => mockPush(...args) },
+  useLocalSearchParams: () => ({
+    accountId: 'fictional',
+    examId: 'fictional-exam',
+    subjectId: '化学',
+    subject: '化学',
+    examName: mockRouteExamName,
+  }),
+}));
+jest.mock('../accounts-context', () => ({
+  useAccounts: () => ({
+    accounts: [{ id: 'fictional', revision: 'r1', providerId: mockProviderId }],
+  }),
+}));
 jest.mock('../services/accounts', () => ({ withAccount: jest.fn() }));
 jest.mock('../services/exam-binding', () => ({ supportsExamBinding: () => false }));
 jest.mock('../providers/registry', () => ({ providerRegistry: { get: jest.fn() } }));
 jest.mock('../state/app', () => {
   const { create } = jest.requireActual<typeof import('zustand')>('zustand');
-  return { useAppStore: create<{ showAbsentSubjects: boolean; septnetGradeDisplay: GradeDisplayMode; dismissedNotices: string[];
-    setShowAbsentSubjects: (show: boolean) => void; setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void; dismissNotice: (id: string) => void;
-  }>(set => ({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [],
-    setShowAbsentSubjects: showAbsentSubjects => set({ showAbsentSubjects }),
-    setSeptnetGradeDisplay: septnetGradeDisplay => set({ septnetGradeDisplay }),
-    dismissNotice: id => set(state => ({ dismissedNotices: [...state.dismissedNotices, id] })),
-  })) };
+  return {
+    useAppStore: create<{
+      showAbsentSubjects: boolean;
+      septnetGradeDisplay: GradeDisplayMode;
+      dismissedNotices: string[];
+      setShowAbsentSubjects: (show: boolean) => void;
+      setSeptnetGradeDisplay: (mode: GradeDisplayMode) => void;
+      dismissNotice: (id: string) => void;
+    }>((set) => ({
+      showAbsentSubjects: true,
+      septnetGradeDisplay: 'both',
+      dismissedNotices: [],
+      setShowAbsentSubjects: (showAbsentSubjects) => set({ showAbsentSubjects }),
+      setSeptnetGradeDisplay: (septnetGradeDisplay) => set({ septnetGradeDisplay }),
+      dismissNotice: (id) =>
+        set((state) => ({ dismissedNotices: [...state.dismissedNotices, id] })),
+    })),
+  };
 });
-let mockEssay: { prompt?: string; answerSheets: { subject: string; url: string; watermarked: boolean }[] } = { answerSheets: [] };
+let mockEssay: {
+  prompt?: string;
+  answerSheets: { subject: string; url: string; watermarked: boolean }[];
+} = { answerSheets: [] };
 let mockStatistics: SubjectStatistic[] = [];
 let mockSheets: { data?: AnswerSheet[]; isPending?: boolean; error?: unknown } = { data: [] };
 const mockRefetch = jest.fn();
@@ -51,24 +101,127 @@ jest.mock('../services/queries', () => ({
   essayQueryOptions: () => ({ data: mockEssay }),
   subjectStatisticsQueryOptions: () => ({ data: mockStatistics }),
 }));
-jest.mock('@tanstack/react-query', () => ({ useQuery: (options: { isPending?: boolean }) => ({ ...options, isPending: options.isPending ?? false }), useQueryClient: () => ({}) }));
+jest.mock('@tanstack/react-query', () => ({
+  useQuery: (options: { isPending?: boolean }) => ({
+    ...options,
+    isPending: options.isPending ?? false,
+  }),
+  useQueryClient: () => ({}),
+}));
 jest.mock('react-native', () => ({
   Modal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   StyleSheet: { absoluteFill: {} },
-  View: ({ children, style, accessibilityLabel }: { children: ReactNode; style?: unknown; accessibilityLabel?: string }) => <div data-style={JSON.stringify(style)} aria-label={accessibilityLabel}>{children}</div>,
-  Pressable: ({ children, onPress, disabled, accessibilityLabel }: { children: ReactNode; onPress?: () => void; disabled?: boolean; accessibilityLabel?: string }) => <button onClick={onPress} disabled={disabled} aria-label={accessibilityLabel}>{children}</button>,
+  View: ({
+    children,
+    style,
+    accessibilityLabel,
+  }: {
+    children: ReactNode;
+    style?: unknown;
+    accessibilityLabel?: string;
+  }) => (
+    <div data-style={JSON.stringify(style)} aria-label={accessibilityLabel}>
+      {children}
+    </div>
+  ),
+  Pressable: ({
+    children,
+    onPress,
+    disabled,
+    accessibilityLabel,
+  }: {
+    children: ReactNode;
+    onPress?: () => void;
+    disabled?: boolean;
+    accessibilityLabel?: string;
+  }) => (
+    <button onClick={onPress} disabled={disabled} aria-label={accessibilityLabel}>
+      {children}
+    </button>
+  ),
 }));
 jest.mock('react-native-paper', () => {
   const List = { Icon: () => <span data-testid="arrow">→</span> };
-  function Menu({ visible, anchor, children }: { visible: boolean; anchor: ReactNode; children: ReactNode }) { return <>{anchor}{visible && <div role="menu">{children}</div>}</>; }
-  Menu.Item = function MenuItem({ title, onPress, leadingIcon }: { title: string; onPress: () => void; leadingIcon?: string }) { return <button role="menuitem" data-selected={leadingIcon === 'check'} onClick={onPress}>{title}</button>; };
+  function Menu({
+    visible,
+    anchor,
+    children,
+  }: {
+    visible: boolean;
+    anchor: ReactNode;
+    children: ReactNode;
+  }) {
+    return (
+      <>
+        {anchor}
+        {visible && <div role="menu">{children}</div>}
+      </>
+    );
+  }
+  Menu.Item = function MenuItem({
+    title,
+    onPress,
+    leadingIcon,
+  }: {
+    title: string;
+    onPress: () => void;
+    leadingIcon?: string;
+  }) {
+    return (
+      <button role="menuitem" data-selected={leadingIcon === 'check'} onClick={onPress}>
+        {title}
+      </button>
+    );
+  };
   return {
-    List, useTheme: () => ({ colors: {} }),
-    Text: ({ children, variant, numberOfLines, adjustsFontSizeToFit, style }: { children: ReactNode; variant?: string; numberOfLines?: number; adjustsFontSizeToFit?: boolean; style?: unknown }) => <span data-variant={variant} data-lines={numberOfLines} data-fit={adjustsFontSizeToFit} data-style={JSON.stringify(style)}>{children}</span>,
-    Button: ({ children, onPress, accessibilityLabel }: { children: ReactNode; onPress?: () => void; accessibilityLabel?: string }) => <button aria-label={accessibilityLabel} onClick={onPress}>{children}</button>,
+    List,
+    useTheme: () => ({ colors: {} }),
+    Text: ({
+      children,
+      variant,
+      numberOfLines,
+      adjustsFontSizeToFit,
+      style,
+    }: {
+      children: ReactNode;
+      variant?: string;
+      numberOfLines?: number;
+      adjustsFontSizeToFit?: boolean;
+      style?: unknown;
+    }) => (
+      <span
+        data-variant={variant}
+        data-lines={numberOfLines}
+        data-fit={adjustsFontSizeToFit}
+        data-style={JSON.stringify(style)}
+      >
+        {children}
+      </span>
+    ),
+    Button: ({
+      children,
+      onPress,
+      accessibilityLabel,
+    }: {
+      children: ReactNode;
+      onPress?: () => void;
+      accessibilityLabel?: string;
+    }) => (
+      <button aria-label={accessibilityLabel} onClick={onPress}>
+        {children}
+      </button>
+    ),
     Checkbox: { Item: () => null },
     Menu,
-    IconButton: ({ icon, onPress, accessibilityLabel }: { icon: string; onPress?: () => void; accessibilityLabel?: string }) => <button data-icon={icon} aria-label={accessibilityLabel} onClick={onPress} />,
+    IconButton: ({
+      icon,
+      onPress,
+      accessibilityLabel,
+    }: {
+      icon: string;
+      onPress?: () => void;
+      accessibilityLabel?: string;
+    }) => <button data-icon={icon} aria-label={accessibilityLabel} onClick={onPress} />,
   };
 });
 jest.mock('../ui', () => ({
@@ -76,18 +229,37 @@ jest.mock('../ui', () => ({
   Body: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   Badge: ({ label }: { label: string }) => <span data-testid="badge">{label}</span>,
-  Header: ({ title, subtitle }: { title: string; subtitle?: string }) => <><h1>{title}</h1>{subtitle ? <span data-testid="header-subtitle">{subtitle}</span> : null}</>, ErrorCard: () => null, LoadingState: ({ label }: { label: string }) => <span>{label}</span>,
+  Header: ({ title, subtitle }: { title: string; subtitle?: string }) => (
+    <>
+      <h1>{title}</h1>
+      {subtitle ? <span data-testid="header-subtitle">{subtitle}</span> : null}
+    </>
+  ),
+  ErrorCard: () => null,
+  LoadingState: ({ label }: { label: string }) => <span>{label}</span>,
   useDoubleTap: (callback: unknown) => callback,
 }));
 jest.mock('../question-score-groups', () => ({ QuestionScoreGroups: () => null }));
-jest.mock('../sheet-image', () => ({ AdaptiveSheetImage: () => null, SheetViewerModal: () => null }));
+jest.mock('../sheet-image', () => ({
+  AdaptiveSheetImage: () => null,
+  SheetViewerModal: () => null,
+}));
 jest.mock('../sheet-actions', () => ({ SheetActionsSheet: () => null }));
 jest.mock('react-native-svg', () => ({
   __esModule: true,
-  default: ({ children, accessibilityLabel }: { children: ReactNode; accessibilityLabel?: string }) => <svg aria-label={accessibilityLabel}>{children}</svg>,
+  default: ({
+    children,
+    accessibilityLabel,
+  }: {
+    children: ReactNode;
+    accessibilityLabel?: string;
+  }) => <svg aria-label={accessibilityLabel}>{children}</svg>,
   G: ({ children }: { children: ReactNode }) => <g>{children}</g>,
-  Circle: ({ accessibilityLabel }: { accessibilityLabel?: string }) => <circle aria-label={accessibilityLabel} />,
-  Line: () => <line />, Polygon: ({ points }: { points: string }) => <polygon points={points} />,
+  Circle: ({ accessibilityLabel }: { accessibilityLabel?: string }) => (
+    <circle aria-label={accessibilityLabel} />
+  ),
+  Line: () => <line />,
+  Polygon: ({ points }: { points: string }) => <polygon points={points} />,
   Text: ({ children }: { children: ReactNode }) => <text>{children}</text>,
 }));
 
@@ -97,31 +269,104 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockProviderId = 'septnet';
   mockRouteExamName = undefined;
-  useAppStore.setState({ showAbsentSubjects: true, septnetGradeDisplay: 'both', dismissedNotices: [] });
+  useAppStore.setState({
+    showAbsentSubjects: true,
+    septnetGradeDisplay: 'both',
+    dismissedNotices: [],
+  });
   mockEssay = { answerSheets: [] };
   mockStatistics = [];
   container = document.createElement('div');
   document.body.append(container);
   root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+});
 
 it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summaries in the existing pages', async () => {
   const resultSections = mockResult.reportSections;
   const subjectSections = mockSubject.reportSections;
   mockProviderId = 'zhixue';
-  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'A等', lowBound: 0, upperBound: 15 }, { name: 'B等', lowBound: 15, upperBound: 30 }] };
-  const trendSections = zhixueTrendSections({ scoreLevelType: 'number', list: [{ tag: { code: 'clazz' }, title: '虚构趋势建议', dataList: [
-    { id: 'fictional-exam', name: '虚构历史考试', dateDisp: '01.02', level: 'B等', statTotalNum: 15, totalNum: 16 },
-  ] }, { tag: { code: 'grade' }, title: '虚构年级趋势建议', dataList: [
-    { id: 'fictional-exam', name: '虚构历史考试', dateDisp: '01.02', level: 'A等', statTotalNum: 100 },
-  ] }] }, { clazz: rule, grade: rule }, 'fictional-exam');
-  mockResult.reportSections = [...trendSections, zhixueDiagnosisSection({ tips: '虚构学科诊断建议', list: [
-    { subjectName: '虚构诊断学科', myRank: 20, rationalRank: 40, avgRank: 50, showGradeSecondary: false, tag: { name: '虚构学科评价' } },
-    { subjectName: '虚构诊断乙', myRank: 30, rationalRank: 45, avgRank: 50, showGradeSecondary: false },
-    { subjectName: '虚构诊断丙', myRank: 40, rationalRank: 55, avgRank: 50, showGradeSecondary: false },
-  ] })];
-  mockSubject.reportSections = [...trendSections, zhixueKnowledgeSection({ tip: '虚构知识掌握建议', dataList: [] })];
+  const rule = {
+    ruleObtainType: 2,
+    leveType: 'NUMBER',
+    levelList: [
+      { name: 'A等', lowBound: 0, upperBound: 15 },
+      { name: 'B等', lowBound: 15, upperBound: 30 },
+    ],
+  };
+  const trendSections = zhixueTrendSections(
+    {
+      scoreLevelType: 'number',
+      list: [
+        {
+          tag: { code: 'clazz' },
+          title: '虚构趋势建议',
+          dataList: [
+            {
+              id: 'fictional-exam',
+              name: '虚构历史考试',
+              dateDisp: '01.02',
+              level: 'B等',
+              statTotalNum: 15,
+              totalNum: 16,
+            },
+          ],
+        },
+        {
+          tag: { code: 'grade' },
+          title: '虚构年级趋势建议',
+          dataList: [
+            {
+              id: 'fictional-exam',
+              name: '虚构历史考试',
+              dateDisp: '01.02',
+              level: 'A等',
+              statTotalNum: 100,
+            },
+          ],
+        },
+      ],
+    },
+    { clazz: rule, grade: rule },
+    'fictional-exam',
+  );
+  mockResult.reportSections = [
+    ...trendSections,
+    zhixueDiagnosisSection({
+      tips: '虚构学科诊断建议',
+      list: [
+        {
+          subjectName: '虚构诊断学科',
+          myRank: 20,
+          rationalRank: 40,
+          avgRank: 50,
+          showGradeSecondary: false,
+          tag: { name: '虚构学科评价' },
+        },
+        {
+          subjectName: '虚构诊断乙',
+          myRank: 30,
+          rationalRank: 45,
+          avgRank: 50,
+          showGradeSecondary: false,
+        },
+        {
+          subjectName: '虚构诊断丙',
+          myRank: 40,
+          rationalRank: 55,
+          avgRank: 50,
+          showGradeSecondary: false,
+        },
+      ],
+    }),
+  ];
+  mockSubject.reportSections = [
+    ...trendSections,
+    zhixueKnowledgeSection({ tip: '虚构知识掌握建议', dataList: [] }),
+  ];
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('班级人数15');
@@ -132,7 +377,9 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
     expect(container.textContent).toContain('班级排名（预估）3~4');
     expect(container.textContent).toContain('学校排名（预估）1~15');
     for (const label of ['班级排名（预估）', '学校排名（预估）']) {
-      const caption = [...container.querySelectorAll('span')].find((node) => node.textContent === label)!;
+      const caption = [...container.querySelectorAll('span')].find(
+        (node) => node.textContent === label,
+      )!;
       expect(caption.getAttribute('data-lines')).toBe('1');
       expect(caption.getAttribute('data-fit')).toBe('true');
     }
@@ -140,7 +387,9 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
     expect(container.textContent).not.toContain('【学校】虚构学校趋势建议');
     expect(container.textContent).not.toContain('虚构学科诊断建议');
     expect(container.textContent).not.toContain('虚构历史考试');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click(),
+    );
     expect(container.textContent).toContain('【班级】虚构趋势建议');
     expect(container.textContent).toContain('【学校】虚构学校趋势建议');
     expect(container.textContent).toContain('虚构历史考试');
@@ -151,7 +400,9 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
     expect(gradeRow.textContent).toBe('学校等第A等变化—人数100');
     for (const row of [classRow, gradeRow]) {
       expect(JSON.parse(row.getAttribute('data-style')!).flexDirection).toBe('row');
-      expect([...row.children].slice(1).map((cell) => JSON.parse(cell.getAttribute('data-style')!).flex)).toEqual([1, 1, 1]);
+      expect(
+        [...row.children].slice(1).map((cell) => JSON.parse(cell.getAttribute('data-style')!).flex),
+      ).toEqual([1, 1, 1]);
     }
     expect(container.textContent).toContain('人数15');
     expect(container.textContent).not.toContain('总人数16');
@@ -164,13 +415,23 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
       expect(polygon.getAttribute('points')).not.toMatch(/NaN|undefined/);
     }
     const radar = container.querySelector('svg')!;
-    expect([...radar.querySelectorAll('text')].map((node) => node.textContent)).toEqual(['虚构诊断学科', '虚构诊断乙', '虚构诊断丙']);
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开发挥水平学科诊断"]')!.click());
+    expect([...radar.querySelectorAll('text')].map((node) => node.textContent)).toEqual([
+      '虚构诊断学科',
+      '虚构诊断乙',
+      '虚构诊断丙',
+    ]);
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开发挥水平学科诊断"]')!.click(),
+    );
     expect(container.textContent).toContain('虚构学科诊断建议');
     expect(container.textContent).not.toContain('虚构学科评价');
-    const advice = [...container.querySelectorAll('span')].find((node) => node.textContent === '虚构学科诊断建议')!;
+    const advice = [...container.querySelectorAll('span')].find(
+      (node) => node.textContent === '虚构学科诊断建议',
+    )!;
     expect(radar.compareDocumentPosition(advice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起发挥水平学科诊断"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起发挥水平学科诊断"]')!.click(),
+    );
     expect(container.textContent).not.toContain('虚构学科诊断建议');
     expect(container.querySelector('svg')).not.toBeNull();
     expect(container.textContent).not.toContain('击败率80');
@@ -183,37 +444,100 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
   }
 });
 
+it('renders signed balance values with a zero reference instead of a 0-100 percentile label', async () => {
+  const previous = mockResult.reportSections;
+  mockResult.reportSections = [
+    balanceSection({
+      list: [
+        { subjectName: '虚构物理', thisLevel: -3.2, usualLevel: -3.2, mediumLevel: 0 },
+        { subjectName: '虚构英语', thisLevel: -4.9, usualLevel: -4.9, mediumLevel: 0 },
+      ],
+    }),
+  ];
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe(
+      '学科水平雷达图，刻度-5至5',
+    );
+    expect(container.textContent).not.toContain('水平范围');
+    expect(container.querySelector('[aria-label="虚构物理 本次水平-3.2"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="虚构英语 本次水平-4.9"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('平时水平');
+  } finally {
+    mockResult.reportSections = previous;
+  }
+});
 it('uses the selected list name for a fallback title across rerenders and lets the only subject occupy the full row', async () => {
   const previous = { ...mockResult };
   mockProviderId = 'zhixue';
   mockRouteExamName = '虚构单科考试名称';
-  Object.assign(mockResult, { examName: '考试报告', examNameIsFallback: true, totalScore: 0, maxTotalScore: 100, originalTotalScore: undefined, subjects: [{ id: 'chem', subject: '化学', score: 0, maxScore: 100 }] });
+  Object.assign(mockResult, {
+    examName: '考试报告',
+    examNameIsFallback: true,
+    totalScore: 0,
+    maxTotalScore: 100,
+    originalTotalScore: undefined,
+    subjects: [{ id: 'chem', subject: '化学', score: 0, maxScore: 100 }],
+  });
   try {
     await act(async () => root.render(<Result />));
     expect(container.querySelector('h1')?.textContent).toBe(mockRouteExamName);
     expect(container.textContent).toContain('总分0 / 100');
     const subject = container.querySelector<HTMLButtonElement>('[aria-label="查看化学详情"]')!;
-    expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({ width: '100%' });
+    expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({
+      width: '100%',
+    });
     await act(async () => subject.click());
-    expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', examName: mockRouteExamName, subjectId: 'chem', subject: '化学' } });
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/subject',
+      params: {
+        accountId: 'fictional',
+        examId: 'fictional-exam',
+        examName: mockRouteExamName,
+        subjectId: 'chem',
+        subject: '化学',
+      },
+    });
     await act(async () => root.render(<Subject />));
-    expect(container.querySelector('[data-testid="header-subtitle"]')?.textContent).toBe(mockRouteExamName);
+    expect(container.querySelector('[data-testid="header-subtitle"]')?.textContent).toBe(
+      mockRouteExamName,
+    );
     expect(container.textContent).not.toContain('考试报告');
     await act(async () => root.render(<Result />));
     expect(container.querySelector('h1')?.textContent).toBe(mockRouteExamName);
-  } finally { Object.assign(mockResult, previous); delete mockResult.examNameIsFallback; }
+  } finally {
+    Object.assign(mockResult, previous);
+    delete mockResult.examNameIsFallback;
+  }
 });
 
 it('hides score-based estimates and keeps partially confirmed scopes in separate rows', async () => {
   const previous = mockResult.reportSections;
-  const trend = { list: ['clazz', 'grade'].map((code) => ({ tag: { code }, dataList: [{ id: 'fictional-exam', level: 'B等', statTotalNum: 701 }] })) };
-  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'B等', lowBound: 15, upperBound: 30 }] };
+  const trend = {
+    list: ['clazz', 'grade'].map((code) => ({
+      tag: { code },
+      dataList: [{ id: 'fictional-exam', level: 'B等', statTotalNum: 701 }],
+    })),
+  };
+  const rule = {
+    ruleObtainType: 2,
+    leveType: 'NUMBER',
+    levelList: [{ name: 'B等', lowBound: 15, upperBound: 30 }],
+  };
   try {
-    mockResult.reportSections = zhixueTrendSections({ ...trend, scoreLevelType: 'score' }, { clazz: rule, grade: rule }, 'fictional-exam');
+    mockResult.reportSections = zhixueTrendSections(
+      { ...trend, scoreLevelType: 'score' },
+      { clazz: rule, grade: rule },
+      'fictional-exam',
+    );
     await act(async () => root.render(<Result />));
     expect(container.textContent).not.toContain('排名（预估）');
     expect(container.textContent).toContain('学校等第B等');
-    mockResult.reportSections = zhixueTrendSections({ ...trend, scoreLevelType: 'number' }, { grade: rule }, 'fictional-exam');
+    mockResult.reportSections = zhixueTrendSections(
+      { ...trend, scoreLevelType: 'number' },
+      { grade: rule },
+      'fictional-exam',
+    );
     await act(async () => root.render(<Result />));
     expect(container.textContent).not.toContain('班级排名（预估）');
     expect(container.textContent).toContain('学校排名（预估）106~210');
@@ -223,42 +547,76 @@ it('hides score-based estimates and keeps partially confirmed scopes in separate
     expect(classMetric.parentElement).not.toBe(schoolMetric.parentElement);
     expect(JSON.parse(classMetric.getAttribute('data-style')!)[1].width).toBe('48%');
     expect(JSON.parse(schoolMetric.getAttribute('data-style')!)[1].width).toBe('31%');
-  } finally { mockResult.reportSections = previous; }
+  } finally {
+    mockResult.reportSections = previous;
+  }
 });
 
 it('renders a union scope in the same trend card and exam detail without a separate duplicate exam', async () => {
   const previous = mockResult.reportSections;
   const point = { id: 'fictional-exam', name: '虚构三范围考试', dateDisp: '07.01', level: 'B等' };
-  const rule = { ruleObtainType: 2, leveType: 'NUMBER', levelList: [{ name: 'B等', lowBound: 5, upperBound: 10 }] };
+  const rule = {
+    ruleObtainType: 2,
+    leveType: 'NUMBER',
+    levelList: [{ name: 'B等', lowBound: 5, upperBound: 10 }],
+  };
   try {
-    mockResult.reportSections = zhixueTrendSections({ scoreLevelType: 'number', list: [
-      { tag: { code: 'clazz' }, dataList: [{ ...point, statTotalNum: 20 }] },
-      { tag: { code: 'grade' }, dataList: [{ ...point, statTotalNum: 300 }] },
-      { tag: { code: 'union' }, title: '虚构联考总结', totalNum: 4000, dataList: [{ ...point, totalNum: 4000 }] },
-    ] }, { clazz: rule, grade: rule, union: rule }, 'fictional-exam');
+    mockResult.reportSections = zhixueTrendSections(
+      {
+        scoreLevelType: 'number',
+        list: [
+          { tag: { code: 'clazz' }, dataList: [{ ...point, statTotalNum: 20 }] },
+          { tag: { code: 'grade' }, dataList: [{ ...point, statTotalNum: 300 }] },
+          {
+            tag: { code: 'union' },
+            title: '虚构联考总结',
+            totalNum: 4000,
+            dataList: [{ ...point, totalNum: 4000 }],
+          },
+        ],
+      },
+      { clazz: rule, grade: rule, union: rule },
+      'fictional-exam',
+    );
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('联考等第B等');
     expect(container.textContent).toContain('联考人数4000');
     expect(container.textContent).not.toContain('联考人数4000人');
     expect(container.textContent).toContain('联考排名（预估）201~400');
     expect(container.textContent).not.toContain('【联考】虚构联考总结');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开近五次成绩变化"]')!.click(),
+    );
     expect(container.textContent!.match(/虚构三范围考试/g)).toHaveLength(1);
-    expect(container.querySelector('[aria-label="07.01 · 虚构三范围考试 联考"]')?.textContent).toBe('联考等第B等变化—人数4000');
+    expect(container.querySelector('[aria-label="07.01 · 虚构三范围考试 联考"]')?.textContent).toBe(
+      '联考等第B等变化—人数4000',
+    );
     expect(container.textContent).toContain('【联考】虚构联考总结');
-    const summary = [...container.querySelectorAll('span')].find((node) => node.textContent === '【联考】虚构联考总结')!;
-    const examTitle = [...container.querySelectorAll('span')].find((node) => node.textContent === '07.01 · 虚构三范围考试')!;
-    const metric = [...container.querySelectorAll('span')].find((node) => node.textContent === '联考人数')!;
+    const summary = [...container.querySelectorAll('span')].find(
+      (node) => node.textContent === '【联考】虚构联考总结',
+    )!;
+    const examTitle = [...container.querySelectorAll('span')].find(
+      (node) => node.textContent === '07.01 · 虚构三范围考试',
+    )!;
+    const metric = [...container.querySelectorAll('span')].find(
+      (node) => node.textContent === '联考人数',
+    )!;
     expect(metric.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(summary.compareDocumentPosition(examTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  } finally { mockResult.reportSections = previous; }
+    expect(
+      summary.compareDocumentPosition(examTitle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  } finally {
+    mockResult.reportSections = previous;
+  }
 });
 it('keeps a true report exam name ahead of the list name and preserves multi-subject card widths', async () => {
   mockRouteExamName = '虚构旧列表名称';
   await act(async () => root.render(<Result />));
   expect(container.querySelector('h1')?.textContent).toBe('虚构考试');
   const subject = container.querySelector<HTMLButtonElement>('[aria-label="查看化学详情"]')!;
-  expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({ width: '48%' });
+  expect(JSON.parse(subject.closest('[data-style]')!.getAttribute('data-style')!)).toEqual({
+    width: '48%',
+  });
   await act(async () => root.render(<Subject />));
   expect(container.querySelector('[data-testid="header-subtitle"]')?.textContent).toBe('虚构考试');
 });
@@ -269,36 +627,77 @@ it('uses the safe generic title when neither a true report name nor selected lis
   try {
     await act(async () => root.render(<Result />));
     expect(container.querySelector('h1')?.textContent).toBe('考试报告');
-  } finally { mockResult.examName = previous; delete mockResult.examNameIsFallback; }
+  } finally {
+    mockResult.examName = previous;
+    delete mockResult.examNameIsFallback;
+  }
 });
 
-it.each< [GradeDisplayMode, string | undefined] >([
-  ['both', 'B4 36-43%'], ['grade', 'B4'], ['percentile', '36-43%'], ['none', undefined],
+it.each<[GradeDisplayMode, string | undefined]>([
+  ['both', 'B4 36-43%'],
+  ['grade', 'B4'],
+  ['percentile', '36-43%'],
+  ['none', undefined],
 ])('设置切换 %s 即时更新总分、科目卡片与单科等第', async (mode, label) => {
   Object.assign(mockResult, { grade: 'B4', gradePercentile: '36-43%' });
   try {
-    await act(async () => root.render(<><ScoreDisplaySettings /><Result /><Subject /></>));
-    const labels = { both: '等第及百分比均显示', grade: '只显示等第', percentile: '只显示百分比', none: '不显示' };
+    await act(async () =>
+      root.render(
+        <>
+          <ScoreDisplaySettings />
+          <Result />
+          <Subject />
+        </>,
+      ),
+    );
+    const labels = {
+      both: '等第及百分比均显示',
+      grade: '只显示等第',
+      percentile: '只显示百分比',
+      none: '不显示',
+    };
     expect(container.querySelector('[role="menu"]')).toBeNull();
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="七天学堂-等第显示方式"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="七天学堂-等第显示方式"]')!.click(),
+    );
     expect(container.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
-    const option = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === labels[mode])!;
+    const option = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+    ).find((button) => button.textContent === labels[mode])!;
     await act(async () => option.click());
     expect(container.querySelector('[role="menu"]')).toBeNull();
-    expect(container.querySelector('[aria-label="七天学堂-等第显示方式"]')?.textContent).toBe(labels[mode]);
-    const grades = Array.from(container.querySelectorAll('[data-testid="badge"]')).filter(badge => badge.textContent !== '缺考');
-    expect(grades.map(badge => badge.textContent)).toEqual(label ? [label, label, label] : []);
-  } finally { delete mockResult.grade; delete mockResult.gradePercentile; }
+    expect(container.querySelector('[aria-label="七天学堂-等第显示方式"]')?.textContent).toBe(
+      labels[mode],
+    );
+    const grades = Array.from(container.querySelectorAll('[data-testid="badge"]')).filter(
+      (badge) => badge.textContent !== '缺考',
+    );
+    expect(grades.map((badge) => badge.textContent)).toEqual(label ? [label, label, label] : []);
+  } finally {
+    delete mockResult.grade;
+    delete mockResult.gradePercentile;
+  }
 });
 
 it('隐藏缺考仅过滤明确缺考，保留零分和无分数的正常科目，且切回显示可恢复', async () => {
   const originalSubjects = mockResult.subjects;
   mockResult.subjects = [...originalSubjects, { subject: '物理' }];
   try {
-    await act(async () => root.render(<><ScoreDisplaySettings /><Result /></>));
+    await act(async () =>
+      root.render(
+        <>
+          <ScoreDisplaySettings />
+          <Result />
+        </>,
+      ),
+    );
     const selectAbsent = async (text: string) => {
-      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label^="显示缺考科目："]')!.click());
-      const option = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent === text)!;
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label^="显示缺考科目："]')!.click(),
+      );
+      const option = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ).find((button) => button.textContent === text)!;
       await act(async () => option.click());
       expect(container.querySelector('[role="menu"]')).toBeNull();
       expect(container.querySelector('[aria-label^="显示缺考科目："]')?.textContent).toBe(text);
@@ -311,7 +710,9 @@ it('隐藏缺考仅过滤明确缺考，保留零分和无分数的正常科目�
     expect(mockResult.subjects).toHaveLength(5);
     await selectAbsent('显示');
     expect(container.querySelector('[aria-label="生物，缺考"]')).not.toBeNull();
-  } finally { mockResult.subjects = originalSubjects; }
+  } finally {
+    mockResult.subjects = originalSubjects;
+  }
 });
 
 it('七天只显示百分比时缺失百分比不回退等第，其他平台不受设置影响', async () => {
@@ -322,91 +723,187 @@ it('七天只显示百分比时缺失百分比不回退等第，其他平台不�
     await act(async () => root.render(<Subject />));
     expect(container.querySelector('[data-testid="badge"]')).toBeNull();
     mockProviderId = 'ruiya';
-    await act(async () => { useAppStore.setState({ septnetGradeDisplay: 'none' }); root.render(<Subject />); });
+    await act(async () => {
+      useAppStore.setState({ septnetGradeDisplay: 'none' });
+      root.render(<Subject />);
+    });
     expect(container.querySelector('[data-testid="badge"]')?.textContent).toBe('B4');
-  } finally { mockSubject.providerContext = context; }
+  } finally {
+    mockSubject.providerContext = context;
+  }
 });
 
 it.each([true, false, undefined])('考试列表按已知属性显示联考或校考徽标 %s', async (isUnion) => {
-  await act(async () => root.render(<ExamMeta exam={{ id: 'fictional-exam', name: '虚构考试', isUnion }} loading={false} />));
-  expect(container.querySelector('[data-testid="badge"]')?.textContent).toBe(isUnion === undefined ? undefined : isUnion ? '联考' : '校考');
+  await act(async () =>
+    root.render(
+      <ExamMeta exam={{ id: 'fictional-exam', name: '虚构考试', isUnion }} loading={false} />,
+    ),
+  );
+  expect(container.querySelector('[data-testid="badge"]')?.textContent).toBe(
+    isUnion === undefined ? undefined : isUnion ? '联考' : '校考',
+  );
 });
 
 it('七天科目页面按题型独立展开分布，显示百分比且不标记本人答案', async () => {
-  mockSubject.reportSections = [essaySection({ score: '0', full: '60', avg: '35', max: '55', highCount: '20' })!,
-    distributionSection([{ th: '1', sort: 1, distri: [{ key: 'A', value: '0.25' }, { key: 'B', value: '99.75' }] },
-      { th: '2', sort: 2, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '100' }] }])!];
+  mockSubject.reportSections = [
+    essaySection({ score: '0', full: '60', avg: '35', max: '55', highCount: '20' })!,
+    distributionSection([
+      {
+        th: '1',
+        sort: 1,
+        distri: [
+          { key: 'A', value: '0.25' },
+          { key: 'B', value: '99.75' },
+        ],
+      },
+      {
+        th: '2',
+        sort: 2,
+        distri: [
+          { key: '零分', value: '0' },
+          { key: '满分(4)', value: '100' },
+        ],
+      },
+    ])!,
+  ];
   try {
     await act(async () => root.render(<Subject />));
     // 作文统计已并入默认收缩的「作文」卡片：展开后与题干、作答图同卡展示。
     expect(container.textContent).not.toContain('个人得分');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
-    expect(container.textContent).toContain('个人得分0分满分60分年级均分35分最高分55分更高分人数20人');
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click(),
+    );
+    expect(container.textContent).toContain(
+      '个人得分0分满分60分年级均分35分最高分55分更高分人数20人',
+    );
     expect(container.textContent).not.toContain('考试小结');
     expect(container.textContent).not.toContain('<span>');
     expect(container.textContent).toContain('选项分布 · 1题');
     expect(container.textContent).toContain('得分区间分布 · 1题');
     expect(container.textContent).not.toContain('第 1 题');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click(),
+    );
     expect(container.textContent).toContain('第 1 题A0.25%B99.75%');
     expect(container.textContent).not.toContain('第 2 题');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click(),
+    );
     expect(container.textContent).toContain('第 2 题满分(4)100%');
     // 0% 的区间没有信息量：整行不渲染，只剩其余区间。
     expect(container.textContent).not.toContain('零分');
     expect(container.querySelector('[aria-label="第 2 题 零分 0%"]')).toBeNull();
-    expect(container.querySelector('[aria-label="第 2 题 满分(4) 100%"] [data-style*="100%"]')).not.toBeNull();
+    expect(
+      container.querySelector('[aria-label="第 2 题 满分(4) 100%"] [data-style*="100%"]'),
+    ).not.toBeNull();
     expect(container.textContent).not.toContain('正确答案：A');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click(),
+    );
     expect(container.textContent).not.toContain('第 1 题');
     expect(container.textContent).toContain('第 2 题');
     expect(container.textContent).not.toContain('展示平台原始分布值');
-  } finally { delete mockSubject.reportSections; }
+  } finally {
+    delete mockSubject.reportSections;
+  }
 });
 
 it('分布先显示十题，显示全部后可恢复；收起再展开也恢复十题', async () => {
-  mockSubject.reportSections = [distributionSection(Array.from({ length: 12 }, (_, index) => ({
-    th: String(index + 1), distri: [{ key: 'A', value: '25' }, { key: 'B', value: '-' }, { key: 'C', value: '75' }, { key: 'D', value: '—' }, { key: '漏填', value: '0' }],
-  })))!];
+  mockSubject.reportSections = [
+    distributionSection(
+      Array.from({ length: 12 }, (_, index) => ({
+        th: String(index + 1),
+        distri: [
+          { key: 'A', value: '25' },
+          { key: 'B', value: '-' },
+          { key: 'C', value: '75' },
+          { key: 'D', value: '—' },
+          { key: '漏填', value: '0' },
+        ],
+      })),
+    )!,
+  ];
   try {
     await act(async () => root.render(<Subject />));
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click(),
+    );
     expect(container.textContent).toContain('第 10 题');
     expect(container.textContent).not.toContain('第 11 题');
     expect(container.textContent).toContain('A25%C75%漏填0%');
     expect(container.textContent).not.toContain('B—');
     expect(container.textContent).not.toContain('B-');
     expect(container.textContent).not.toContain('D—');
-    const all = () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '显示全部 12 题')!;
+    const all = () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent === '显示全部 12 题',
+      )!;
     await act(async () => all().click());
     expect(container.textContent).toContain('第 12 题');
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '仅显示前 10 题')!.click());
+    await act(async () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === '仅显示前 10 题')!
+        .click(),
+    );
     expect(container.textContent).not.toContain('第 11 题');
     await act(async () => all().click());
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起选项分布"]')!.click(),
+    );
     expect(container.textContent).not.toContain('第 1 题');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开选项分布"]')!.click(),
+    );
     expect(container.textContent).not.toContain('第 11 题');
-  } finally { delete mockSubject.reportSections; }
+  } finally {
+    delete mockSubject.reportSections;
+  }
 });
 
 it('得分区间分布隐藏 0% 区间，全为 0% 的题目整题略过且题数据此统计', async () => {
-  mockSubject.reportSections = [distributionSection([
-    { th: '3', sort: 3, distri: [{ key: '零分', value: '0' }, { key: '1-2分', value: '0.25' }, { key: '满分(4)', value: '99.75' }] },
-    { th: '4', sort: 4, distri: [{ key: '零分', value: '0' }, { key: '满分(4)', value: '0' }] },
-  ])!];
+  mockSubject.reportSections = [
+    distributionSection([
+      {
+        th: '3',
+        sort: 3,
+        distri: [
+          { key: '零分', value: '0' },
+          { key: '1-2分', value: '0.25' },
+          { key: '满分(4)', value: '99.75' },
+        ],
+      },
+      {
+        th: '4',
+        sort: 4,
+        distri: [
+          { key: '零分', value: '0' },
+          { key: '满分(4)', value: '0' },
+        ],
+      },
+    ])!,
+  ];
   try {
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('得分区间分布 · 1题');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开得分区间分布"]')!.click(),
+    );
     expect(container.textContent).toContain('第 3 题1-2分0.25%满分(4)99.75%');
     expect(container.textContent).not.toContain('零分');
     expect(container.textContent).not.toContain('第 4 题');
-  } finally { delete mockSubject.reportSections; }
+  } finally {
+    delete mockSubject.reportSections;
+  }
 });
 
 it.each([true, false])('总分头部展示等级、发布时间，人数旁展示联考属性 %s', async (isUnion) => {
-  Object.assign(mockResult, { grade: 'B4', gradePercentile: '36-43%', publishedAt: '2026-05-27 10:00:00', participantCount: 512, isUnion });
+  Object.assign(mockResult, {
+    grade: 'B4',
+    gradePercentile: '36-43%',
+    publishedAt: '2026-05-27 10:00:00',
+    participantCount: 512,
+    isUnion,
+  });
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('总分B4 36-43%');
@@ -415,20 +912,39 @@ it.each([true, false])('总分头部展示等级、发布时间，人数旁展�
     expect(container.textContent).not.toContain('考试信息');
     expect(container.textContent).not.toContain('考试小结');
   } finally {
-    delete mockResult.grade; delete mockResult.gradePercentile; delete mockResult.publishedAt;
-    delete mockResult.participantCount; delete mockResult.isUnion;
+    delete mockResult.grade;
+    delete mockResult.gradePercentile;
+    delete mockResult.publishedAt;
+    delete mockResult.participantCount;
+    delete mockResult.isUnion;
   }
 });
 
 it('dismisses the image loading modal through its backdrop without a visible close button', async () => {
   const dismiss = jest.fn();
-  await act(async () => root.render(<QuestionImagePreview selection={{ question: { id: 'q1', label: '虚构题目' }, kind: 'student' }} accountId="fictional" revision="r1" examId="fictional-exam" subjectId="fictional-subject" onDismiss={dismiss} onLongPress={jest.fn()} />));
-  const message = Array.from(container.querySelectorAll('span')).find(x => x.textContent === '正在获取作答图片…');
+  await act(async () =>
+    root.render(
+      <QuestionImagePreview
+        selection={{ question: { id: 'q1', label: '虚构题目' }, kind: 'student' }}
+        accountId="fictional"
+        revision="r1"
+        examId="fictional-exam"
+        subjectId="fictional-subject"
+        onDismiss={dismiss}
+        onLongPress={jest.fn()}
+      />,
+    ),
+  );
+  const message = Array.from(container.querySelectorAll('span')).find(
+    (x) => x.textContent === '正在获取作答图片…',
+  );
   expect(message).toBeDefined();
   expect(container.textContent).not.toContain('关闭');
   await act(async () => message!.click());
   expect(dismiss).not.toHaveBeenCalled();
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click());
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="关闭图片预览"]')!.click(),
+  );
   expect(dismiss).toHaveBeenCalledTimes(1);
 });
 
@@ -437,7 +953,12 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   await act(async () => root.render(<Result />));
   expect(container.textContent).toContain('总分65 / 200原始 20');
   const cards = Array.from(container.querySelectorAll<HTMLButtonElement>('button'));
-  expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual(['查看化学详情', '查看数学详情', '生物，缺考', '历史，缺考']);
+  expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+    '查看化学详情',
+    '查看数学详情',
+    '生物，缺考',
+    '历史，缺考',
+  ]);
   expect(cards[0].textContent).toContain('65 / 100原始 20');
   expect(cards[0].querySelector('[data-testid="badge"]')?.textContent).toBe('B4 36-43%');
   expect(cards[0].textContent).not.toContain('赋分');
@@ -450,33 +971,58 @@ it('考试详情显示总分和单科赋分/原始分，缺考置底不可点击
   }
   expect(mockPush).not.toHaveBeenCalled();
   await act(async () => cards[0].click());
-  expect(mockPush).toHaveBeenCalledWith({ pathname: '/subject', params: { accountId: 'fictional', examId: 'fictional-exam', examName: '虚构考试', subjectId: '化学', subject: '化学' } });
+  expect(mockPush).toHaveBeenCalledWith({
+    pathname: '/subject',
+    params: {
+      accountId: 'fictional',
+      examId: 'fictional-exam',
+      examName: '虚构考试',
+      subjectId: '化学',
+      subject: '化学',
+    },
+  });
   expect(mockResult.subjects.map((item) => item.subject)).toEqual(originalOrder);
 });
 
 it('科目卡片分数行禁止换行，赋分与原始分同排，宽度不足时由字号自适应', async () => {
   await act(async () => root.render(<Result />));
   const card = container.querySelector<HTMLElement>('[aria-label="查看化学详情"]')!;
-  const row = Array.from(card.querySelectorAll<HTMLElement>('[data-style]')).find((node) => node.getAttribute('data-style')!.includes('"alignItems":"baseline"'))!;
-  expect(JSON.parse(row.getAttribute('data-style')!)).toEqual({ flexDirection: 'row', alignItems: 'baseline', gap: 8 });
+  const row = Array.from(card.querySelectorAll<HTMLElement>('[data-style]')).find((node) =>
+    node.getAttribute('data-style')!.includes('"alignItems":"baseline"'),
+  )!;
+  expect(JSON.parse(row.getAttribute('data-style')!)).toEqual({
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+  });
   expect(row.textContent).toBe('65 / 100原始 20');
   const score = row.querySelector<HTMLElement>('[data-variant="headlineSmall"]')!;
   expect(score.getAttribute('data-lines')).toBe('1');
   expect(score.getAttribute('data-fit')).toBe('true');
   expect(JSON.parse(score.getAttribute('data-style')!)).toEqual({ flexShrink: 1 });
-  expect(row.querySelector<HTMLElement>('[data-variant="bodySmall"]')!.getAttribute('data-lines')).toBe('1');
+  expect(
+    row.querySelector<HTMLElement>('[data-variant="bodySmall"]')!.getAttribute('data-lines'),
+  ).toBe('1');
 });
 
 it('排名格子在名次后显示班级和学校击败率', async () => {
-  mockResult.rankings = [{ scope: 'class', rank: 5 }, { scope: 'grade', rank: 40 }];
+  mockResult.rankings = [
+    { scope: 'class', rank: 5 },
+    { scope: 'grade', rank: 40 },
+  ];
   mockResult.ranking = { scope: 'grade', rank: 40 };
-  mockResult.defeatRates = [{ scope: 'class', value: 60.5 }, { scope: 'grade', value: 55.2 }];
+  mockResult.defeatRates = [
+    { scope: 'class', value: 60.5 },
+    { scope: 'grade', value: 55.2 },
+  ];
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('班级5击败率 60.5%');
     expect(container.textContent).toContain('学校40击败率 55.2%');
   } finally {
-    delete mockResult.rankings; delete mockResult.ranking; delete mockResult.defeatRates;
+    delete mockResult.rankings;
+    delete mockResult.ranking;
+    delete mockResult.defeatRates;
   }
 });
 
@@ -488,7 +1034,9 @@ it('考试和科目详情只在主分数后显示满分，原始分不重复显�
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('总分65 / 200原始 20');
     expect(container.textContent).not.toContain('原始 20 /');
-    expect(container.querySelector('[aria-label="查看化学详情"]')?.textContent).toContain('65 / 100原始 20');
+    expect(container.querySelector('[aria-label="查看化学详情"]')?.textContent).toContain(
+      '65 / 100原始 20',
+    );
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('65 / 100B4 36-43%原始 20');
     expect(container.textContent).not.toContain('原始 20 /');
@@ -508,22 +1056,44 @@ it('科目详情同时显示赋分和原始分', async () => {
 
 it('知识章节默认收起，展开显示得分等级与基准，缺少满分时保留文字', async () => {
   mockSubject.chapterAnalysis = [
-    { label: '虚构章节', values: {}, scoreBreakdown: { score: 0, maxScore: 6, grade: 'C', benchmarks: [{ label: '特控线基准', score: 5 }, { label: '本科线基准', score: 3 }] } },
-    { label: '缺失满分章节', values: { 个人得分: '2', 达标分A: '3' }, scoreBreakdown: { score: 2, benchmarks: [] } },
+    {
+      label: '虚构章节',
+      values: {},
+      scoreBreakdown: {
+        score: 0,
+        maxScore: 6,
+        grade: 'C',
+        benchmarks: [
+          { label: '特控线基准', score: 5 },
+          { label: '本科线基准', score: 3 },
+        ],
+      },
+    },
+    {
+      label: '缺失满分章节',
+      values: { 个人得分: '2', 达标分A: '3' },
+      scoreBreakdown: { score: 2, benchmarks: [] },
+    },
   ];
   try {
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('知识章节');
     expect(container.textContent).not.toContain('· 2项');
     expect(container.textContent).not.toContain('虚构章节');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开知识章节"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开知识章节"]')!.click(),
+    );
     expect(container.textContent).toContain('虚构章节0 / 6C');
     expect(container.textContent).toContain('特控线基准5');
     expect(container.textContent).toContain('本科线基准3');
     expect(container.textContent).toContain('个人得分 2 · 达标分A 3');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起知识章节"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起知识章节"]')!.click(),
+    );
     expect(container.textContent).not.toContain('虚构章节');
-  } finally { delete mockSubject.chapterAnalysis; }
+  } finally {
+    delete mockSubject.chapterAnalysis;
+  }
 });
 
 it('答题详情默认展开，收起隐藏内容，再展开恢复内容', async () => {
@@ -539,47 +1109,99 @@ it('答题详情默认展开，收起隐藏内容，再展开恢复内容', asyn
     expect(toggle.getAttribute('aria-label')).toBe('展开答题详情');
     await act(async () => toggle.click());
     expect(container.textContent).toContain('虚构答题说明');
-  } finally { delete mockSubject.questionNotice; }
+  } finally {
+    delete mockSubject.questionNotice;
+  }
 });
 
 it('科目各范围排名以大字号显示名次，小字号显示总人数', async () => {
-  mockSubject.statistics = [{ scope: '班级', rank: 2, participantCount: 30 }, { scope: '年级', rank: 4, participantCount: 100 }, { scope: '总排名', rank: 15, participantCount: 200 }];
-  mockSubject.defeatRates = [{ scope: 'class', value: 70.1 }, { scope: 'grade', value: 62.3 }];
+  mockSubject.statistics = [
+    { scope: '班级', rank: 2, participantCount: 30 },
+    { scope: '年级', rank: 4, participantCount: 100 },
+    { scope: '总排名', rank: 15, participantCount: 200 },
+  ];
+  mockSubject.defeatRates = [
+    { scope: 'class', value: 70.1 },
+    { scope: 'grade', value: 62.3 },
+  ];
   try {
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('联考排名');
     expect(container.textContent).toContain('学校排名');
     expect(container.textContent).not.toContain('年级');
-    expect(Array.from(container.querySelectorAll('[data-variant="bodySmall"]')).map(node => node.textContent)).toEqual(expect.arrayContaining(['/ 30', '/ 100', '/ 200']));
-    expect(Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(node => node.textContent)).toEqual(['2', '4', '15']);
+    expect(
+      Array.from(container.querySelectorAll('[data-variant="bodySmall"]')).map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(expect.arrayContaining(['/ 30', '/ 100', '/ 200']));
+    expect(
+      Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(['2', '4', '15']);
     expect(container.textContent).toContain('击败率 70.1%');
     expect(container.textContent).toContain('击败率 62.3%');
-  } finally { delete mockSubject.statistics; delete mockSubject.defeatRates; }
+  } finally {
+    delete mockSubject.statistics;
+    delete mockSubject.defeatRates;
+  }
 });
 
 it('总分分数线直接显示各线分数及单位，无需展开', async () => {
-  mockResult.reportSections = [{ id: 'score-lines', title: '总分分数线', highlights: [{ label: '特控线', value: '500.5', unit: '分' }, { label: '本科线', value: '400', unit: '分' }] }];
+  mockResult.reportSections = [
+    {
+      id: 'score-lines',
+      title: '总分分数线',
+      highlights: [
+        { label: '特控线', value: '500.5', unit: '分' },
+        { label: '本科线', value: '400', unit: '分' },
+      ],
+    },
+  ];
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('总分分数线特控线500.5分本科线400分');
-    expect(Array.from(container.querySelectorAll('button')).some(button => button.textContent === '展开')).toBe(false);
-  } finally { delete mockResult.reportSections; }
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (button) => button.textContent === '展开',
+      ),
+    ).toBe(false);
+  } finally {
+    delete mockResult.reportSections;
+  }
 });
 
 it('章节建议随概览展开收起，仅有说明时也可以展开', async () => {
-  mockSubject.reportSections = [{ id: 'chapter-summary', title: '章节概览', notes: ['虚构学习建议'], collapseNotes: true }];
+  mockSubject.reportSections = [
+    { id: 'chapter-summary', title: '章节概览', notes: ['虚构学习建议'], collapseNotes: true },
+  ];
   try {
     await act(async () => root.render(<Subject />));
     expect(container.textContent).not.toContain('虚构学习建议');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开章节概览"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开章节概览"]')!.click(),
+    );
     expect(container.textContent).toContain('虚构学习建议');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起章节概览"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起章节概览"]')!.click(),
+    );
     expect(container.textContent).not.toContain('虚构学习建议');
-  } finally { delete mockSubject.reportSections; }
+  } finally {
+    delete mockSubject.reportSections;
+  }
 });
 
 it('综合分析默认折叠，展开显示数值与对比，收起后保留说明', async () => {
-  mockResult.reportSections = [{ id: 'fictional-comparison', title: '学科表现', comparisonMetric: '超过比例', notes: ['虚构说明'], items: [{ label: '化学', values: { 超过比例: '50%' } }], comparisons: [{ label: '化学', series: [{ label: '本人', percent: 50 }] }] }];
+  mockResult.reportSections = [
+    {
+      id: 'fictional-comparison',
+      title: '学科表现',
+      comparisonMetric: '超过比例',
+      notes: ['虚构说明'],
+      items: [{ label: '化学', values: { 超过比例: '50%' } }],
+      comparisons: [{ label: '化学', series: [{ label: '本人', percent: 50 }] }],
+    },
+  ];
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('学科表现虚构说明');
@@ -597,7 +1219,9 @@ it('综合分析默认折叠，展开显示数值与对比，收起后保留说�
     expect(container.textContent).not.toContain('50%');
     expect(container.textContent).toContain('虚构说明');
     expect(toggle.dataset.icon).toBe('chevron-down');
-  } finally { delete mockResult.reportSections; }
+  } finally {
+    delete mockResult.reportSections;
+  }
 });
 
 it('作文卡片按数据出现，原卷入口与科目统计按能力显示', async () => {
@@ -606,9 +1230,19 @@ it('作文卡片按数据出现，原卷入口与科目统计按能力显示', a
   expect(container.textContent).not.toContain('查看原卷');
   expect(container.textContent).not.toContain('作文');
 
-  get.mockReturnValue({ getEssayDetail: () => undefined, getDebugSubjectFields: () => undefined, getPaperImages: () => undefined });
-  mockEssay = { prompt: '虚构作文题干', answerSheets: [{ subject: '化学', url: 'https://example.com/essay.jpg', watermarked: true }] };
-  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
+  get.mockReturnValue({
+    getEssayDetail: () => undefined,
+    getDebugSubjectFields: () => undefined,
+    getPaperImages: () => undefined,
+  });
+  mockEssay = {
+    prompt: '虚构作文题干',
+    answerSheets: [{ subject: '化学', url: 'https://example.com/essay.jpg', watermarked: true }],
+  };
+  mockStatistics = [
+    { scope: '学校参考', participantCount: 584 },
+    { scope: '学校', rank: 164, rankMax: 211, estimate: true },
+  ];
   await act(async () => root.render(<Subject />));
   expect(container.textContent).toContain('查看原卷');
   expect(container.textContent).not.toContain('虚构作文题干');
@@ -617,8 +1251,14 @@ it('作文卡片按数据出现，原卷入口与科目统计按能力显示', a
   await act(async () => essayToggle.click());
   expect(container.textContent).toContain('虚构作文题干');
   expect(container.textContent).toContain('查看本人作答');
-  await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '查看本人作答')!.click());
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+  await act(async () =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === '查看本人作答')!
+      .click(),
+  );
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click(),
+  );
   expect(container.textContent).not.toContain('虚构作文题干');
 });
 
@@ -639,15 +1279,23 @@ it('答题详情在没有逐题与答题卡时给出说明，加载失败可重�
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('平台未提供本科目的答题卡与逐题得分。');
     // 平台确实给了答题卡时保持原来的入口。
-    mockSheets = { data: [{ subject: '化学', url: 'https://example.com/sheet.jpg', watermarked: true }] };
+    mockSheets = {
+      data: [{ subject: '化学', url: 'https://example.com/sheet.jpg', watermarked: true }],
+    };
     await act(async () => root.render(<Subject />));
-    expect(container.textContent).toContain('平台未提供逐题得分，可查看带分数标注的答题卡（双击放大）：');
+    expect(container.textContent).toContain(
+      '平台未提供逐题得分，可查看带分数标注的答题卡（双击放大）：',
+    );
     expect(container.textContent).not.toContain('平台未提供本科目');
     // 取答题卡失败时提示并可重试，而不是留白。
     mockSheets = { error: new Error('fictional') };
     await act(async () => root.render(<Subject />));
     expect(container.textContent).toContain('答题卡加载失败。');
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent === '重试')!.click());
+    await act(async () =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+        .find((button) => button.textContent === '重试')!
+        .click(),
+    );
     expect(mockRefetch).toHaveBeenCalled();
     // 平台自己已说明逐题数据缺失时不再重复一句。
     mockSheets = { data: [] };
@@ -665,12 +1313,17 @@ it('答题详情在没有逐题与答题卡时给出说明，加载失败可重�
 it('科目统计：人数与相邻排名同字号，不重复显示单位', async () => {
   await act(async () => root.render(<Subject />));
   expect(container.textContent).not.toContain('学校参考');
-  mockStatistics = [{ scope: '学校参考', participantCount: 584 }, { scope: '学校', rank: 164, rankMax: 211, estimate: true }];
+  mockStatistics = [
+    { scope: '学校参考', participantCount: 584 },
+    { scope: '学校', rank: 164, rankMax: 211, estimate: true },
+  ];
   await act(async () => root.render(<Subject />));
   expect(container.textContent).toContain('学校参考人数584');
   expect(container.textContent).toContain('学校排名（预估）164~211');
   // 与「科目各范围排名以大字号显示名次，小字号显示总人数」用的是同一套排版约定。
-  const big = Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(node => node.textContent);
+  const big = Array.from(container.querySelectorAll('[data-variant="headlineSmall"]')).map(
+    (node) => node.textContent,
+  );
   expect(big).toEqual(expect.arrayContaining(['584', '164~211']));
 });
 
@@ -681,31 +1334,47 @@ it('作文统计随科目详情到达即并入作文卡片，不依赖作文懒�
     await act(async () => root.render(<Subject />));
     expect(container.querySelector('[aria-label="展开作文"]')).not.toBeNull();
     expect(container.textContent).not.toContain('个人得分');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="展开作文"]')!.click(),
+    );
     expect(container.textContent).toContain('个人得分41.5分满分60分年级均分38分最高分55分');
     expect(container.textContent).not.toContain('作文统计');
     expect(container.textContent).not.toContain('正在加载作文题干与作答…');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="收起作文"]')!.click(),
+    );
     expect(container.textContent).not.toContain('个人得分');
-  } finally { delete mockSubject.reportSections; }
+  } finally {
+    delete mockSubject.reportSections;
+  }
 });
 
 it('考试详情顶部提示按单场考试记忆关闭状态', async () => {
   await act(async () => root.render(<Result />));
   expect(container.textContent).not.toContain('等第及对应的百分比');
 
-  const notice = { id: 'septnet-union-grade-scope', text: '等第及对应的百分比表示的是在学校内的排名比例。' };
+  const notice = {
+    id: 'septnet-union-grade-scope',
+    text: '等第及对应的百分比表示的是在学校内的排名比例。',
+  };
   mockResult.notice = notice;
   try {
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('等第及对应的百分比表示的是在学校内的排名比例。');
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="关闭提示"]')!.click());
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="关闭提示"]')!.click(),
+    );
     expect(container.textContent).not.toContain('等第及对应的百分比');
     // 关闭状态键为「考试 + 提示」：本场不再显示。
-    expect(useAppStore.getState().dismissedNotices).toEqual(['fictional-exam:septnet-union-grade-scope']);
+    expect(useAppStore.getState().dismissedNotices).toEqual([
+      'fictional-exam:septnet-union-grade-scope',
+    ]);
     // 换一场考试（不同 examId）时同一条提示仍会出现。
     mockResult.examId = 'fictional-exam-2';
     await act(async () => root.render(<Result />));
     expect(container.textContent).toContain('等第及对应的百分比');
-  } finally { delete mockResult.notice; mockResult.examId = 'fictional-exam'; }
+  } finally {
+    delete mockResult.notice;
+    mockResult.examId = 'fictional-exam';
+  }
 });

@@ -1,13 +1,28 @@
 import { z } from 'zod';
 import { ecb, gcm } from '@noble/ciphers/aes.js';
 import { CryptoDigestAlgorithm, digestStringAsync, getRandomBytes } from 'expo-crypto';
-import { ProviderError, type AnswerSheet, type AuthSession, type ClaimCandidate, type EssayDetail, type ExamResult, type ReportSection, type SubjectStatistic, type UnclaimedExam } from '../domain/models';
+import {
+  ProviderError,
+  type AnswerSheet,
+  type AuthSession,
+  type ClaimCandidate,
+  type EssayDetail,
+  type ExamResult,
+  type ReportSection,
+  type SubjectStatistic,
+  type UnclaimedExam,
+} from '../domain/models';
 import { distributionSection, essaySection } from './septnet-report';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
 import {
-  base64ToBytes, bytesToBase64, bytesToUtf8, numericScore, parseValidated,
-  rsaEncryptPkcs1 as rsaEncryptPkcs1WithKey, utf8ToBytes,
+  base64ToBytes,
+  bytesToBase64,
+  bytesToUtf8,
+  numericScore,
+  parseValidated,
+  rsaEncryptPkcs1 as rsaEncryptPkcs1WithKey,
+  utf8ToBytes,
 } from './codec';
 
 // 编解码原语与七天学堂自己的实现一致；此处重新导出，供加密层测试直接引用。
@@ -30,12 +45,17 @@ const publicHost = 'https://szone-public.7net.cc/';
 const version = '4.6.4';
 /** 固定协议：不要修改命名空间、规范化规则或截断长度，避免已有账号的标识变化。 */
 export async function septnetOpenId(account: string): Promise<string> {
-  return (await digestStringAsync(CryptoDigestAlgorithm.SHA256,
-    'magicmirror:septnet:miniapp:openid:v1:' + account.trim())).slice(0, 28);
+  return (
+    await digestStringAsync(
+      CryptoDigestAlgorithm.SHA256,
+      'magicmirror:septnet:miniapp:openid:v1:' + account.trim(),
+    )
+  ).slice(0, 28);
 }
 // 实测：App 用 WebView UA 发请求；固定为该形态即可通过。
-const userAgent = 'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) AppleWebKit/537.36'
-  + ' (KHTML, like Gecko) Version/4.0 Chrome/110.0.5481.154 Mobile Safari/537.36';
+const userAgent =
+  'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) AppleWebKit/537.36' +
+  ' (KHTML, like Gecko) Version/4.0 Chrome/110.0.5481.154 Mobile Safari/537.36';
 
 /**
  * 平台协议常量（与官方客户端一致；均非本项目自有数据）：
@@ -45,17 +65,22 @@ const userAgent = 'Mozilla/5.0 (Linux; Android 12; ALA-AN70 Build/V417IR; wv) Ap
  *   由项目负责人明确决定内置（2026-09-28）；仅用于解密本人账号的响应。
  */
 const passwordSuffix = '{MTgyMjU2MDU0MjF7c3pvbmV9}';
-const rsaModulus = BigInt('0x'
-  + 'eb8c4705556bba9a2cd2c8fddf08269667705e4deb99c78e071dc5a1ceaebe16'
-  + '4b9e0293896e27e2d157da50ee92f5e1ef689484682505a2e0f7731af77ce93c'
-  + '458430d52d41713b1c11b9eaabf3c2ba88f9be3d76b7f33775ba9374d282aee7'
-  + 'd2ba4c016ac93e38e1de9eef48273926beb3eeacb9c80b7c834f2dc8c7d62589');
+const rsaModulus = BigInt(
+  '0x' +
+    'eb8c4705556bba9a2cd2c8fddf08269667705e4deb99c78e071dc5a1ceaebe16' +
+    '4b9e0293896e27e2d157da50ee92f5e1ef689484682505a2e0f7731af77ce93c' +
+    '458430d52d41713b1c11b9eaabf3c2ba88f9be3d76b7f33775ba9374d282aee7' +
+    'd2ba4c016ac93e38e1de9eef48273926beb3eeacb9c80b7c834f2dc8c7d62589',
+);
 const rsaExponent = 65537n;
 export const platformResponseKey = utf8ToBytes('c0f1a30cba2147949ee71cf71cba3c20');
 const staticResponseKey = platformResponseKey;
 
 /** 平台固定的 1024 位密钥封装公钥（公开参数，见上方说明）。 */
-export function rsaEncryptPkcs1(message: Uint8Array, random: (size: number) => Uint8Array): Uint8Array {
+export function rsaEncryptPkcs1(
+  message: Uint8Array,
+  random: (size: number) => Uint8Array,
+): Uint8Array {
   return rsaEncryptPkcs1WithKey(message, rsaModulus, rsaExponent, random);
 }
 
@@ -72,74 +97,146 @@ const sealedSchema = z.object({
 });
 const loginSchema = z.object({ token: tokenSchema });
 const profileSchema = z.object({
-  userGuid: z.string().optional(), studentGuid: z.string().optional(),
-  nickName: z.string().optional(), studentName: z.string().optional(),
-  schoolName: z.string().optional(), grade: z.string().optional(), currentGrade: z.string().optional(),
-  schoolGuid: z.string().optional(), ruCode: z.string().optional(),
+  userGuid: z.string().optional(),
+  studentGuid: z.string().optional(),
+  nickName: z.string().optional(),
+  studentName: z.string().optional(),
+  schoolName: z.string().optional(),
+  grade: z.string().optional(),
+  currentGrade: z.string().optional(),
+  schoolGuid: z.string().optional(),
+  ruCode: z.string().optional(),
 });
 const examItemSchema = z.object({
-  examGuid: z.string().min(1), examName: z.string().min(1), time: z.string().optional(),
+  examGuid: z.string().min(1),
+  examName: z.string().min(1),
+  time: z.string().optional(),
   // 实测：`type` 是平台自带的考试性质短标签（如「周测」「月考」），官方客户端把它原样渲染成角标。
   type: z.string().max(16).optional(),
-  authView: z.number().int().optional(), ruleHash: z.string().optional(),
+  authView: z.number().int().optional(),
+  ruleHash: z.string().optional(),
 });
-const examPageSchema = z.object({ startIndex: z.number().int().optional(), list: z.array(examItemSchema) });
-const unclaimedPageSchema = z.array(z.object({ month: z.string().optional(), list: z.array(z.object({ examGuid: z.string().min(1), examName: z.string().min(1), time: z.string().optional(), studentCodeList: z.array(z.string().min(1)) })) }));
-const claimCandidateSchema = z.array(z.object({ studentCode: z.string().min(1), url: z.string().url().optional() }));
+const examPageSchema = z.object({
+  startIndex: z.number().int().optional(),
+  list: z.array(examItemSchema),
+});
+const unclaimedPageSchema = z.array(
+  z.object({
+    month: z.string().optional(),
+    list: z.array(
+      z.object({
+        examGuid: z.string().min(1),
+        examName: z.string().min(1),
+        time: z.string().optional(),
+        studentCodeList: z.array(z.string().min(1)),
+      }),
+    ),
+  }),
+);
+const claimCandidateSchema = z.array(
+  z.object({ studentCode: z.string().min(1), url: z.string().url().optional() }),
+);
 const configSchema = z.object({
   config: z.object({ CloseCF: z.boolean().optional() }).optional(),
   charge: z.object({ ShowPosition: z.boolean().optional() }).optional(),
 });
 const essaySchema = z.object({
-  th: z.string().optional(), score: z.string().optional(), full: z.string().optional(),
-  avg: z.string().optional(), max: z.string().optional(), diff: z.string().optional(), highCount: z.string().optional(),
+  th: z.string().optional(),
+  score: z.string().optional(),
+  full: z.string().optional(),
+  avg: z.string().optional(),
+  max: z.string().optional(),
+  diff: z.string().optional(),
+  highCount: z.string().optional(),
 });
 const subjectSchema = z.object({
-  km: z.string().min(1), code: z.number().int().optional(),
-  codeDesc: z.string().optional(), responseGuid: z.string().optional(), srcKm: z.string().optional(),
+  km: z.string().min(1),
+  code: z.number().int().optional(),
+  codeDesc: z.string().optional(),
+  responseGuid: z.string().optional(),
+  srcKm: z.string().optional(),
   // 语文/英语等含作文的科目会带 essayThInfo（官方「作文」卡片数据源：score/full/avg/max 均为字符串）。
-  ai_essay_report: z.object({
-    essayThInfo: essaySchema.optional(),
-  }).optional(),
+  ai_essay_report: z
+    .object({
+      essayThInfo: essaySchema.optional(),
+    })
+    .optional(),
 });
 const subjectsSchema = z.object({
-  exam_info: z.object({
-    studentCount: z.string().optional(), examPublishType: z.number().int().optional(),
-    queryTime: z.string().optional(), isUnion: z.boolean().optional(), kmCount: z.number().int().optional(),
-  }).optional(),
+  exam_info: z
+    .object({
+      studentCount: z.string().optional(),
+      examPublishType: z.number().int().optional(),
+      queryTime: z.string().optional(),
+      isUnion: z.boolean().optional(),
+      kmCount: z.number().int().optional(),
+    })
+    .optional(),
   list: z.array(subjectSchema),
 });
 // 官方响应的科目满分可能是数字，总分满分则可能是字符串；统一后复用保守分数解析。
 const fullScoreSchema = z.union([z.string(), z.number().finite()]).transform(String).optional();
 const reportRowSchema = z.object({
-  km: z.string().min(1), kmTag: z.number().int().optional(),
-  score: z.string().optional(), fullScore: fullScoreSchema,
-  fuScore: z.string().optional(), fuFullScore: fullScoreSchema,
-  fuTag: z.boolean().optional(), isFu: z.number().int().optional(),
-  grade: z.string().optional(), rating: z.string().optional(),
+  km: z.string().min(1),
+  kmTag: z.number().int().optional(),
+  score: z.string().optional(),
+  fullScore: fullScoreSchema,
+  fuScore: z.string().optional(),
+  fuFullScore: fullScoreSchema,
+  fuTag: z.boolean().optional(),
+  isFu: z.number().int().optional(),
+  grade: z.string().optional(),
+  rating: z.string().optional(),
 });
 const answerCardSchema = z.object({
   answerUrls: z.array(z.string().min(1)).optional(),
   isWatermark: z.boolean().optional(),
 });
 const reportSchema = z.object({
-  km_info: z.object({ score: z.string().optional(), fullScore: fullScoreSchema, grade: z.string().optional() }).optional(),
+  km_info: z
+    .object({
+      score: z.string().optional(),
+      fullScore: fullScoreSchema,
+      grade: z.string().optional(),
+    })
+    .optional(),
   km_list: z.array(reportRowSchema).optional(),
-  other: z.object({ tips: z.string().optional(), totalSubjects: z.string().optional(), fuTotalSubjects: z.string().optional() }).optional(),
+  other: z
+    .object({
+      tips: z.string().optional(),
+      totalSubjects: z.string().optional(),
+      fuTotalSubjects: z.string().optional(),
+    })
+    .optional(),
 });
 const essayResponseSchema = z.object({ essayThInfo: essaySchema.optional() });
-const distributionSchema = z.array(z.object({ th: z.string().min(1), sort: z.number().finite().optional(),
-  distri: z.array(z.object({ key: z.string(), value: z.string() })),
-}));
+const distributionSchema = z.array(
+  z.object({
+    th: z.string().min(1),
+    sort: z.number().finite().optional(),
+    distri: z.array(z.object({ key: z.string(), value: z.string() })),
+  }),
+);
 // 试卷原卷：按科目下发的扫描图地址（itembank OSS 签名直链，实测短期有效）。
-const paperSchema = z.array(z.object({ subject: z.string().min(1), imgUrls: z.array(z.string().min(1)).optional() }));
+const paperSchema = z.array(
+  z.object({ subject: z.string().min(1), imgUrls: z.array(z.string().min(1)).optional() }),
+);
 // 作文：作答切图（myAnswers）与得分统计；pdf 相关字段实测多为空，同样保守解析。
 const essayReportSchema = z.object({
-  th: z.string().optional(), score: z.string().optional(), full: z.string().optional(),
-  avg: z.string().optional(), max: z.string().optional(), diff: z.string().optional(), highCount: z.string().optional(),
-  myAnswers: z.array(z.string().min(1)).optional(), pdfImgs: z.array(z.string().min(1)).optional(),
+  th: z.string().optional(),
+  score: z.string().optional(),
+  full: z.string().optional(),
+  avg: z.string().optional(),
+  max: z.string().optional(),
+  diff: z.string().optional(),
+  highCount: z.string().optional(),
+  myAnswers: z.array(z.string().min(1)).optional(),
+  pdfImgs: z.array(z.string().min(1)).optional(),
 });
-const essayStemSchema = z.object({ questionStemTxt: z.string().optional(), uploadImg: z.string().optional() });
+const essayStemSchema = z.object({
+  questionStemTxt: z.string().optional(),
+  uploadImg: z.string().optional(),
+});
 // 旧版接口的科目统计：`report.total` 经项目负责人确认为「校内参加本科目考试的考生人数」（是本科目，不是本场考试）。
 const subjectGradeSchema = z.object({
   report: z.object({ total: z.number().finite().optional() }).optional(),
@@ -158,10 +255,26 @@ function assignedScore(row: z.infer<typeof reportRowSchema> | undefined): number
 
 // 按项目负责人提供的等第区间（从高到低的比例带，单位 %），展示串由此派生，不推算个人精确名次。
 const gradeBands: Readonly<Record<string, { min: number; max: number }>> = {
-  A1: { min: 0, max: 1 }, A2: { min: 1, max: 3 }, A3: { min: 3, max: 6 }, A4: { min: 6, max: 10 }, A5: { min: 10, max: 15 },
-  B1: { min: 15, max: 21 }, B2: { min: 21, max: 28 }, B3: { min: 28, max: 36 }, B4: { min: 36, max: 43 }, B5: { min: 43, max: 50 },
-  C1: { min: 50, max: 56 }, C2: { min: 56, max: 64 }, C3: { min: 64, max: 71 }, C4: { min: 71, max: 78 }, C5: { min: 78, max: 84 },
-  D1: { min: 84, max: 89 }, D2: { min: 89, max: 93 }, D3: { min: 93, max: 96 }, D4: { min: 96, max: 98 }, D5: { min: 98, max: 99 },
+  A1: { min: 0, max: 1 },
+  A2: { min: 1, max: 3 },
+  A3: { min: 3, max: 6 },
+  A4: { min: 6, max: 10 },
+  A5: { min: 10, max: 15 },
+  B1: { min: 15, max: 21 },
+  B2: { min: 21, max: 28 },
+  B3: { min: 28, max: 36 },
+  B4: { min: 36, max: 43 },
+  B5: { min: 43, max: 50 },
+  C1: { min: 50, max: 56 },
+  C2: { min: 56, max: 64 },
+  C3: { min: 64, max: 71 },
+  C4: { min: 71, max: 78 },
+  C5: { min: 78, max: 84 },
+  D1: { min: 84, max: 89 },
+  D2: { min: 89, max: 93 },
+  D3: { min: 93, max: 96 },
+  D4: { min: 96, max: 98 },
+  D5: { min: 98, max: 99 },
   E: { min: 99, max: 100 },
 };
 
@@ -176,12 +289,13 @@ function gradeBand(grade: string | undefined): { min: number; max: number } | un
 
 function gradePercentileText(grade: string | undefined): string | undefined {
   const band = gradeBand(grade);
-  return band ? band.min === 0 ? `前${band.max}%` : `${band.min}-${band.max}%` : undefined;
+  return band ? (band.min === 0 ? `前${band.max}%` : `${band.min}-${band.max}%`) : undefined;
 }
 
 function businessError(status: number | string): ProviderError {
   const code = Number(status);
-  if (code === 401 || code === 403) return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
+  if (code === 401 || code === 403)
+    return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
   if (code === 404) return new ProviderError('NOT_FOUND', '该考试不属于当前账号或尚未认领');
   if (code === 405) return new ProviderError('NOT_FOUND', '该接口已停止提供');
   if (code === 4033) return new ProviderError('UNSUPPORTED', '平台拒绝了本次请求');
@@ -189,7 +303,9 @@ function businessError(status: number | string): ProviderError {
 }
 
 function toParamString(params: Record<string, string>): string {
-  return Object.entries(params).map(([key, value]) => `${key}=${value ?? ''}`).join(';');
+  return Object.entries(params)
+    .map(([key, value]) => `${key}=${value ?? ''}`)
+    .join(';');
 }
 
 export interface SeptnetOptions {
@@ -206,24 +322,47 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
   const revoked = new WeakSet<AuthSession>();
 
   function assertSession(session: AuthSession): void {
-    if (session.providerId !== providerId || revoked.has(session) || !tokenSchema.safeParse(session.accessToken).success
-      || (session.expiresAt !== undefined && session.expiresAt <= Date.now())) {
+    if (
+      session.providerId !== providerId ||
+      revoked.has(session) ||
+      !tokenSchema.safeParse(session.accessToken).success ||
+      (session.expiresAt !== undefined && session.expiresAt <= Date.now())
+    ) {
       throw new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
     }
   }
 
-  function context(session: AuthSession): { schoolGuid: string; grade: string; ruCode: string; studentName?: string; cookie?: string } {
+  function context(session: AuthSession): {
+    schoolGuid: string;
+    grade: string;
+    ruCode: string;
+    studentName?: string;
+    cookie?: string;
+  } {
     assertSession(session);
     const schoolGuid = session.providerContext?.['schoolGuid'];
     const grade = session.providerContext?.['grade'];
     if (!schoolGuid || !grade) {
       throw new ProviderError('SESSION_EXPIRED', '学校信息不完整，请重新登录');
     }
-    return { schoolGuid, grade, ruCode: session.providerContext?.['ruCode'] ?? '', studentName: session.providerContext?.['studentName'], cookie: session.providerContext?.['wafCookie'] };
+    return {
+      schoolGuid,
+      grade,
+      ruCode: session.providerContext?.['ruCode'] ?? '',
+      studentName: session.providerContext?.['studentName'],
+      cookie: session.providerContext?.['wafCookie'],
+    };
   }
 
-  function headers(session: AuthSession | undefined, extra: Record<string, string> = {}): Record<string, string> {
-    const base: Record<string, string> = { Version: version, 'User-Agent': userAgent, 'Accept-Charset': 'UTF-8' };
+  function headers(
+    session: AuthSession | undefined,
+    extra: Record<string, string> = {},
+  ): Record<string, string> {
+    const base: Record<string, string> = {
+      Version: version,
+      'User-Agent': userAgent,
+      'Accept-Charset': 'UTF-8',
+    };
     if (session) {
       base['Token'] = session.accessToken;
       const cookie = session.providerContext?.['wafCookie'];
@@ -232,17 +371,24 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
     return { ...base, ...extra };
   }
 
-  async function request(url: string, init: RequestInit):
-  Promise<{ status: number | string; message?: string; data?: unknown; setCookie?: string }> {
+  async function request(
+    url: string,
+    init: RequestInit,
+  ): Promise<{ status: number | string; message?: string; data?: unknown; setCookie?: string }> {
     try {
-      const response = await requestWithTimeout(transport, url, { ...init, credentials: 'omit', redirect: 'error' });
+      const response = await requestWithTimeout(transport, url, {
+        ...init,
+        credentials: 'omit',
+        redirect: 'error',
+      });
       if (response.status === 401 || response.status === 403) {
         throw new ProviderError('SESSION_EXPIRED', '登录已失效，请重新登录');
       }
       if ([429, 451].includes(response.status)) {
         throw new ProviderError('UNSUPPORTED', '请求受到频率限制，请稍后再试');
       }
-      if (response.status !== 200) throw new ProviderError('NETWORK', '七天学堂服务请求失败', response.status >= 500);
+      if (response.status !== 200)
+        throw new ProviderError('NETWORK', '七天学堂服务请求失败', response.status >= 500);
       const body = parse(envelopeSchema, await response.json(), '响应');
       if (Number(body.status) !== 200) throw businessError(body.status);
       return { ...body, setCookie: response.headers.get('set-cookie') ?? undefined };
@@ -260,8 +406,13 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
     if (sealed.data.bn && sealed.data.content) {
       if (!sessionKey) throw new ProviderError('UNKNOWN', '缺少会话密钥');
       try {
-        return JSON.parse(bytesToUtf8(gcm(sessionKey, base64ToBytes(sealed.data.bn))
-          .decrypt(base64ToBytes(sealed.data.content))));
+        return JSON.parse(
+          bytesToUtf8(
+            gcm(sessionKey, base64ToBytes(sealed.data.bn)).decrypt(
+              base64ToBytes(sealed.data.content),
+            ),
+          ),
+        );
       } catch {
         throw new ProviderError('UNKNOWN', '七天学堂响应解密失败');
       }
@@ -269,7 +420,9 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
     if (sealed.data.isEncrypt && sealed.data.content) {
       // 平台用 AES-ECB/PKCS#7。noble 的 decrypt 自带该填充层，并在填充非法时抛错 —— 不要再手动去填充。
       try {
-        return JSON.parse(bytesToUtf8(ecb(staticResponseKey).decrypt(base64ToBytes(sealed.data.content))));
+        return JSON.parse(
+          bytesToUtf8(ecb(staticResponseKey).decrypt(base64ToBytes(sealed.data.content))),
+        );
       } catch {
         throw new ProviderError('UNKNOWN', '七天学堂响应解密失败');
       }
@@ -278,7 +431,10 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
   }
 
   /** 每次加密请求现场生成会话密钥：服务端按请求自带的 `bk` 解密，无需预先协商。 */
-  function seal(params: Record<string, string>): { key: Uint8Array; headers: Record<string, string> } {
+  function seal(params: Record<string, string>): {
+    key: Uint8Array;
+    headers: Record<string, string>;
+  } {
     const key = random(32);
     const bk = bytesToBase64(rsaEncryptPkcs1(utf8ToBytes(bytesToBase64(key)), random));
     const paramString = toParamString(params);
@@ -294,55 +450,113 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
 
   async function userInfo(session: AuthSession, options?: ProviderRequestOptions) {
     if (session.providerContext?.loginMethod === 'miniapp') {
-      return parse(profileSchema, await publicPost(session, 'publicszoneui.service/UserService/info', {}, options), '学生信息');
+      return parse(
+        profileSchema,
+        await publicPost(session, 'publicszoneui.service/UserService/info', {}, options),
+        '学生信息',
+      );
     }
     const sealed = seal({});
     const body = await request(host + 'userInfo/GetUserInfo', {
       method: 'GET',
-      headers: headers(session, { ...sealed.headers, 'Content-Type': 'application/json; charset=utf-8;' }),
+      headers: headers(session, {
+        ...sealed.headers,
+        'Content-Type': 'application/json; charset=utf-8;',
+      }),
       signal: options?.signal,
     });
     return parse(profileSchema, openData(body.data, sealed.key), '学生信息');
   }
 
-  async function examPage(session: AuthSession, startIndex: number, rows: number, options?: ProviderRequestOptions) {
+  async function examPage(
+    session: AuthSession,
+    startIndex: number,
+    rows: number,
+    options?: ProviderRequestOptions,
+  ) {
     const target = context(session);
     if (session.providerContext?.loginMethod === 'miniapp') {
-      return parse(examPageSchema, await publicPost(session, 'publicszoneui.service/ExamNService/ClaimExams', {
-        startIndex: String(startIndex), rows: String(rows), schoolGuid: target.schoolGuid, grade: target.grade,
-      }, options), '考试列表');
+      return parse(
+        examPageSchema,
+        await publicPost(
+          session,
+          'publicszoneui.service/ExamNService/ClaimExams',
+          {
+            startIndex: String(startIndex),
+            rows: String(rows),
+            schoolGuid: target.schoolGuid,
+            grade: target.grade,
+          },
+          options,
+        ),
+        '考试列表',
+      );
     }
-    const query = `startIndex=${startIndex}&rows=${rows}`
-      + `&schoolGuid=${encodeURIComponent(target.schoolGuid)}&grade=${encodeURIComponent(target.grade)}`;
+    const query =
+      `startIndex=${startIndex}&rows=${rows}` +
+      `&schoolGuid=${encodeURIComponent(target.schoolGuid)}&grade=${encodeURIComponent(target.grade)}`;
     const body = await request(scoreHost + 'exam/getClaimExams?' + query, {
-      method: 'GET', headers: headers(session, { 'Content-Type': 'application/json; charset=utf-8;' }), signal: options?.signal,
+      method: 'GET',
+      headers: headers(session, { 'Content-Type': 'application/json; charset=utf-8;' }),
+      signal: options?.signal,
     });
     return parse(examPageSchema, openData(body.data), '考试列表');
   }
 
-  async function encryptedPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+  async function encryptedPost(
+    session: AuthSession,
+    route: string,
+    params: Record<string, string>,
+    options?: ProviderRequestOptions,
+  ) {
     if (session.providerContext?.loginMethod === 'miniapp') {
-      return publicPost(session, route.replace(/^Question\//, 'publicszoneui.service/QuestionNService/'), params, options);
+      return publicPost(
+        session,
+        route.replace(/^Question\//, 'publicszoneui.service/QuestionNService/'),
+        params,
+        options,
+      );
     }
     const sealed = seal(params);
     const body = await request(scoreHost + route, {
       method: 'POST',
-      headers: headers(session, { ...sealed.headers, 'Content-Type': 'application/json; charset=UTF-8' }),
-      body: '{}', signal: options?.signal,
+      headers: headers(session, {
+        ...sealed.headers,
+        'Content-Type': 'application/json; charset=UTF-8',
+      }),
+      body: '{}',
+      signal: options?.signal,
     });
     return openData(body.data, sealed.key);
   }
 
-  async function formPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
+  async function formPost(
+    session: AuthSession,
+    route: string,
+    params: Record<string, string>,
+    options?: ProviderRequestOptions,
+  ) {
     if (session.providerContext?.loginMethod === 'miniapp') {
-      const routes: Record<string, string> = { 'exam/SetView': 'SetView', 'exam/UnClaimImg': 'UnClaimImg', 'exam/claimExam': 'ClaimExam' };
+      const routes: Record<string, string> = {
+        'exam/SetView': 'SetView',
+        'exam/UnClaimImg': 'UnClaimImg',
+        'exam/claimExam': 'ClaimExam',
+      };
       if (!routes[route]) throw new ProviderError('UNSUPPORTED', '小程序接口不支持该操作');
-      return publicPost(session, 'publicszoneui.service/ExamService/' + routes[route], params, options);
+      return publicPost(
+        session,
+        'publicszoneui.service/ExamService/' + routes[route],
+        params,
+        options,
+      );
     }
     const body = await request(scoreHost + route, {
       method: 'POST',
-      headers: headers(session, { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;' }),
-      body: new URLSearchParams(params).toString(), signal: options?.signal,
+      headers: headers(session, {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;',
+      }),
+      body: new URLSearchParams(params).toString(),
+      signal: options?.signal,
     });
     return openData(body.data);
   }
@@ -351,36 +565,67 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
    * 小程序接口面：token 与版本号放进请求参数，不发送 `Token` 头（与官方小程序同形；实测服务端不校验）。
    * 响应仍可能使用平台静态密钥加密，沿用 `openData` 解密；错误语义与 App 接口面一致。
    */
-  async function publicPost(session: AuthSession, route: string, params: Record<string, string>, options?: ProviderRequestOptions) {
-    const publicHeaders: Record<string, string> = { Version: version, 'User-Agent': userAgent, 'Accept-Charset': 'UTF-8' };
+  async function publicPost(
+    session: AuthSession,
+    route: string,
+    params: Record<string, string>,
+    options?: ProviderRequestOptions,
+  ) {
+    const publicHeaders: Record<string, string> = {
+      Version: version,
+      'User-Agent': userAgent,
+      'Accept-Charset': 'UTF-8',
+    };
     const cookie = session.providerContext?.['wafCookie'];
     if (cookie) publicHeaders['Cookie'] = cookie;
     const body = await request(publicHost + route, {
       method: 'POST',
-      headers: { ...publicHeaders, 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8;' },
-      body: new URLSearchParams({ ...params, token: session.accessToken, version }).toString(), signal: options?.signal,
+      headers: {
+        ...publicHeaders,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8;',
+      },
+      body: new URLSearchParams({ ...params, token: session.accessToken, version }).toString(),
+      signal: options?.signal,
     });
     return openData(body.data);
   }
 
   /** 按科目定位考试成绩缓存里的科目行；缺考与不存在返回 undefined。 */
   function locateSubject(result: ExamResult, subjectId: string) {
-    const subject = result.subjects.find((item) => item.id === subjectId || item.subject === subjectId);
+    const subject = result.subjects.find(
+      (item) => item.id === subjectId || item.subject === subjectId,
+    );
     return subject && subject.status !== 'absent' ? subject : undefined;
   }
 
   /** 附加报告缺失不阻断基础成绩；失效会话和取消操作仍交给统一错误路径。 */
-  async function optionalReport<T>(task: () => Promise<T>, label: string, options?: ProviderRequestOptions): Promise<{ data?: T; notice?: string }> {
-    try { return { data: await task() }; } catch (error) {
+  async function optionalReport<T>(
+    task: () => Promise<T>,
+    label: string,
+    options?: ProviderRequestOptions,
+  ): Promise<{ data?: T; notice?: string }> {
+    try {
+      return { data: await task() };
+    } catch (error) {
       throwIfAborted(options?.signal);
       if (!(error instanceof ProviderError) || error.code === 'SESSION_EXPIRED') throw error;
-      return { notice: error.code === 'NOT_FOUND' || error.code === 'UNSUPPORTED'
-        ? `${label}：平台暂未提供可用数据。` : `${label}暂时加载失败，可稍后重新进入查看。` };
+      return {
+        notice:
+          error.code === 'NOT_FOUND' || error.code === 'UNSUPPORTED'
+            ? `${label}：平台暂未提供可用数据。`
+            : `${label}暂时加载失败，可稍后重新进入查看。`,
+      };
     }
   }
 
   /** 列表接口不带考试名，故按页回查，避免伪造名称。 */
-  async function findExam(session: AuthSession, examId: string, options?: ProviderRequestOptions, rows = 8, maxPages = 100) {
+  async function findExam(
+    session: AuthSession,
+    examId: string,
+    options?: ProviderRequestOptions,
+    rows = 8,
+    maxPages = 100,
+  ) {
     let offset = 0;
     for (let page = 0; page < maxPages; page += 1) {
       const data = await examPage(session, offset, rows, options);
@@ -398,21 +643,53 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
    * 答题卡按科目（作答记录）取：实测需要 responseGuid + schoolRuCode；schoolRuCode 缺失会静默返回 0 条。
    * `watermark` 选择官方客户端的两套渲染：false = 干净扫描件；true = 图片上标注各题得分的版本。
    */
-  async function answerCardSheets(session: AuthSession, examId: string, subjectId: string, watermark: boolean, options?: ProviderRequestOptions): Promise<AnswerSheet[]> {
+  async function answerCardSheets(
+    session: AuthSession,
+    examId: string,
+    subjectId: string,
+    watermark: boolean,
+    options?: ProviderRequestOptions,
+  ): Promise<AnswerSheet[]> {
     assertSession(session);
     if (!subjectId) return [];
     const target = context(session);
     const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade };
-    const subjects = parse(subjectsSchema, await encryptedPost(session, 'Question/Subjects', params, options), '科目列表');
+    const subjects = parse(
+      subjectsSchema,
+      await encryptedPost(session, 'Question/Subjects', params, options),
+      '科目列表',
+    );
     const sheets: AnswerSheet[] = [];
     for (const subject of subjects.list) {
       if (subject.km !== subjectId) continue;
-      if (subject.km === '总分' || subject.code === -1 || subject.code === -2 || !subject.responseGuid) continue;
-      const card = parse(answerCardSchema, await encryptedPost(session, 'Question/AnswerCardUrl', {
-        ...params, responseGuid: subject.responseGuid, isWatermark: watermark ? 'true' : 'false', schoolRuCode: target.ruCode,
-      }, options), '答题卡');
+      if (
+        subject.km === '总分' ||
+        subject.code === -1 ||
+        subject.code === -2 ||
+        !subject.responseGuid
+      )
+        continue;
+      const card = parse(
+        answerCardSchema,
+        await encryptedPost(
+          session,
+          'Question/AnswerCardUrl',
+          {
+            ...params,
+            responseGuid: subject.responseGuid,
+            isWatermark: watermark ? 'true' : 'false',
+            schoolRuCode: target.ruCode,
+          },
+          options,
+        ),
+        '答题卡',
+      );
       for (const url of card.answerUrls ?? []) {
-        sheets.push({ subject: subject.km, url, watermarked: watermark || card.isWatermark === true });
+        sheets.push({
+          subject: subject.km,
+          url,
+          watermarked: watermark || card.isWatermark === true,
+        });
       }
     }
     return sheets;
@@ -420,30 +697,55 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
 
   return {
     metadata: {
-      id: providerId, name: '七天学堂',
+      id: providerId,
+      name: '七天学堂',
       remark: '七天网络',
       description: '支持官方APP登录与小程序登录；使用账号密码直连官方服务。',
       officialDomain: host,
     },
     // 实测：平台只提供「等级位置」，且非会员被门控拦截（charge.ShowPosition=false）。
-    capabilities: { profile: true, exams: true, results: true, ranking: false, subjectDetails: true, answerSheets: true },
-    passwordLoginMethods: [{ id: 'app', label: '官方APP登录' }, { id: 'miniapp', label: '小程序登录' }],
+    capabilities: {
+      profile: true,
+      exams: true,
+      results: true,
+      ranking: false,
+      subjectDetails: true,
+      answerSheets: true,
+    },
+    passwordLoginMethods: [
+      { id: 'app', label: '官方APP登录' },
+      { id: 'miniapp', label: '小程序登录' },
+    ],
     async authenticate(account, password) {
       return this.authenticateWithMethod!(account, password, 'app');
     },
     async authenticateWithMethod(account, password, method) {
-      if (method !== 'app' && method !== 'miniapp') throw new ProviderError('UNSUPPORTED', '不支持该登录方式');
-      if (!account.trim() || !password) throw new ProviderError('INVALID_CREDENTIALS', '请输入账号和密码');
+      if (method !== 'app' && method !== 'miniapp')
+        throw new ProviderError('UNSUPPORTED', '不支持该登录方式');
+      if (!account.trim() || !password)
+        throw new ProviderError('INVALID_CREDENTIALS', '请输入账号和密码');
       const miniapp = method === 'miniapp';
-      const body = miniapp ? new URLSearchParams({ userCode: account.trim(), userPass: password,
-        openId: await septnetOpenId(account), unionid: '', token: '', version }).toString()
-        : `userCode=${encodeURIComponent(account.trim())}`
-          + `&password=${encodeURIComponent(bytesToBase64(utf8ToBytes(password + passwordSuffix)))}`;
-      const login = await request(miniapp ? publicHost + 'publicszoneui.service/XCXService/Login' : host + 'login', {
-        method: 'POST',
-        headers: headers(undefined, { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;' }),
-        body,
-      }).catch((error: unknown) => {
+      const body = miniapp
+        ? new URLSearchParams({
+            userCode: account.trim(),
+            userPass: password,
+            openId: await septnetOpenId(account),
+            unionid: '',
+            token: '',
+            version,
+          }).toString()
+        : `userCode=${encodeURIComponent(account.trim())}` +
+          `&password=${encodeURIComponent(bytesToBase64(utf8ToBytes(password + passwordSuffix)))}`;
+      const login = await request(
+        miniapp ? publicHost + 'publicszoneui.service/XCXService/Login' : host + 'login',
+        {
+          method: 'POST',
+          headers: headers(undefined, {
+            'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8;',
+          }),
+          body,
+        },
+      ).catch((error: unknown) => {
         // 实测：账号/口令不对时平台返回 403（非 401），对登录而言这是凭据问题而非会话过期。
         if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') {
           throw new ProviderError('INVALID_CREDENTIALS', '账号或密码不正确');
@@ -454,8 +756,13 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       // 登录响应下发的 WAF 会话 cookie（aliyungf_tc），此后每个请求都要回传。
       const wafCookie = /(?:^|,\s*)(aliyungf_tc=[^;,\s]+)/.exec(login.setCookie ?? '')?.[1];
       const session: AuthSession = {
-        providerId, accountId: account.trim(), accessToken: data.token,
-        providerContext: { ...(miniapp ? { loginMethod: 'miniapp' } : {}), ...(wafCookie ? { wafCookie } : {}) },
+        providerId,
+        accountId: account.trim(),
+        accessToken: data.token,
+        providerContext: {
+          ...(miniapp ? { loginMethod: 'miniapp' } : {}),
+          ...(wafCookie ? { wafCookie } : {}),
+        },
       };
       // 官方客户端登录后会做一次密钥协商；实测加密接口并不依赖它，失败可忽略。
       try {
@@ -463,18 +770,27 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
           const sealed = seal({});
           await request(host + 'user', {
             method: 'POST',
-            headers: headers(session, { ...sealed.headers, 'Content-Type': 'application/json; charset=UTF-8' }),
+            headers: headers(session, {
+              ...sealed.headers,
+              'Content-Type': 'application/json; charset=UTF-8',
+            }),
             body: '{}',
           });
         }
-      } catch { /* 协商失败不影响后续请求 */ }
+      } catch {
+        /* 协商失败不影响后续请求 */
+      }
       const profile = await userInfo(session);
       const schoolGuid = profile.schoolGuid;
       const grade = (profile.currentGrade ?? profile.grade ?? '').toLowerCase();
-      if (!schoolGuid || !grade) throw new ProviderError('UNSUPPORTED', '该账号未绑定学校信息，请在官方 App 检查');
+      if (!schoolGuid || !grade)
+        throw new ProviderError('UNSUPPORTED', '该账号未绑定学校信息，请在官方 App 检查');
       session.providerContext = {
         ...(miniapp ? { loginMethod: 'miniapp' } : {}),
-        schoolGuid, grade, ...(profile.studentName ? { studentName: profile.studentName } : {}), ...(profile.ruCode ? { ruCode: profile.ruCode } : {}),
+        schoolGuid,
+        grade,
+        ...(profile.studentName ? { studentName: profile.studentName } : {}),
+        ...(profile.ruCode ? { ruCode: profile.ruCode } : {}),
         ...(wafCookie ? { wafCookie } : {}),
       };
       return session;
@@ -491,22 +807,49 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
     },
     async getExamList(session, page = {}, options?: ProviderRequestOptions) {
       const start = page.offset ?? 0;
-      if (!Number.isSafeInteger(start) || start < 0) throw new ProviderError('UNKNOWN', '分页参数无效');
+      if (!Number.isSafeInteger(start) || start < 0)
+        throw new ProviderError('UNKNOWN', '分页参数无效');
       const data = await examPage(session, start, 8, options);
       const target = context(session);
-      return Promise.all(data.list.map(async (exam) => {
-        // 列表不返回联考属性，只为已可查看考试补取官方科目信息；失败时不猜测校考。
-        const metadata = exam.authView === 0 ? await optionalReport(async () => parse(subjectsSchema,
-          await encryptedPost(session, 'Question/Subjects', { examGuid: exam.examGuid,
-            schoolGuid: target.schoolGuid, grade: target.grade }, options), '考试属性').exam_info, '考试属性', options) : undefined;
-        return { id: exam.examGuid, name: exam.examName, date: exam.time,
-          category: (exam.type ?? '').trim() || '其它', hasResult: exam.authView === 0,
-          ...(metadata?.data?.isUnion !== undefined ? { isUnion: metadata.data.isUnion } : {}),
-        };
-      }));
+      return Promise.all(
+        data.list.map(async (exam) => {
+          // 列表不返回联考属性，只为已可查看考试补取官方科目信息；失败时不猜测校考。
+          const metadata =
+            exam.authView === 0
+              ? await optionalReport(
+                  async () =>
+                    parse(
+                      subjectsSchema,
+                      await encryptedPost(
+                        session,
+                        'Question/Subjects',
+                        {
+                          examGuid: exam.examGuid,
+                          schoolGuid: target.schoolGuid,
+                          grade: target.grade,
+                        },
+                        options,
+                      ),
+                      '考试属性',
+                    ).exam_info,
+                  '考试属性',
+                  options,
+                )
+              : undefined;
+          return {
+            id: exam.examGuid,
+            name: exam.examName,
+            date: exam.time,
+            category: (exam.type ?? '').trim() || '其它',
+            hasResult: exam.authView === 0,
+            ...(metadata?.data?.isUnion !== undefined ? { isUnion: metadata.data.isUnion } : {}),
+          };
+        }),
+      );
     },
     async loadExam(session, examId, options?: ProviderRequestOptions) {
-      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId)) throw new ProviderError('NOT_FOUND', '考试标识无效');
+      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId))
+        throw new ProviderError('NOT_FOUND', '考试标识无效');
       await formPost(session, 'exam/SetView', { examGuid: examId }, options);
     },
     async getUnclaimedExams(session, options?: ProviderRequestOptions): Promise<UnclaimedExam[]> {
@@ -516,34 +859,74 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       if (!studentName) throw new ProviderError('UNSUPPORTED', '缺少学生姓名，请重新登录');
       const grade = profile?.currentGrade ?? target.grade;
       const query = new URLSearchParams({ studentName, schoolGuid: target.schoolGuid, grade });
-      const data = session.providerContext?.loginMethod === 'miniapp'
-        ? await publicPost(session, 'publicszoneui.service/ExamService/UnclaimExams', Object.fromEntries(query), options)
-        : openData((await request(scoreHost + `exam/getUnClaimExams?${query.toString()}`, {
-        method: 'GET', headers: headers(session), signal: options?.signal,
-      })).data);
+      const data =
+        session.providerContext?.loginMethod === 'miniapp'
+          ? await publicPost(
+              session,
+              'publicszoneui.service/ExamService/UnclaimExams',
+              Object.fromEntries(query),
+              options,
+            )
+          : openData(
+              (
+                await request(scoreHost + `exam/getUnClaimExams?${query.toString()}`, {
+                  method: 'GET',
+                  headers: headers(session),
+                  signal: options?.signal,
+                })
+              ).data,
+            );
       const groups = parse(unclaimedPageSchema, data, '待认领考试');
-      return groups.flatMap((group) => group.list.map((item) => ({ id: item.examGuid, name: item.examName, date: item.time, studentCodes: item.studentCodeList })));
+      return groups.flatMap((group) =>
+        group.list.map((item) => ({
+          id: item.examGuid,
+          name: item.examName,
+          date: item.time,
+          studentCodes: item.studentCodeList,
+        })),
+      );
     },
-    async getClaimCandidates(session, examId, studentCodes, options?: ProviderRequestOptions): Promise<ClaimCandidate[]> {
+    async getClaimCandidates(
+      session,
+      examId,
+      studentCodes,
+      options?: ProviderRequestOptions,
+    ): Promise<ClaimCandidate[]> {
       if (!/^[A-Za-z0-9-]{8,64}$/.test(examId) || !studentCodes.length) return [];
-      const data = await formPost(session, 'exam/UnClaimImg', { examGuid: examId, studentCodes: JSON.stringify(studentCodes) }, options);
+      const data = await formPost(
+        session,
+        'exam/UnClaimImg',
+        { examGuid: examId, studentCodes: JSON.stringify(studentCodes) },
+        options,
+      );
       return parse(claimCandidateSchema, data, '认领候选试卷');
     },
     async claimExam(session, examId, studentCode, options?: ProviderRequestOptions): Promise<void> {
-      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId) || !studentCode) throw new ProviderError('NOT_FOUND', '认领参数无效');
+      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId) || !studentCode)
+        throw new ProviderError('NOT_FOUND', '认领参数无效');
       await formPost(session, 'exam/claimExam', { examGuid: examId, studentCode }, options);
     },
     async getExamResult(session, examId, options?: ProviderRequestOptions) {
-      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId)) throw new ProviderError('NOT_FOUND', '考试标识无效');
+      if (!/^[A-Za-z0-9-]{8,64}$/.test(examId))
+        throw new ProviderError('NOT_FOUND', '考试标识无效');
       const exam = await findExam(session, examId, options);
       if (exam.authView !== undefined && exam.authView >= 1) {
         throw new ProviderError('NOT_FOUND', '该考试需先在官方 App 载入或认领后才能查看');
       }
       const target = context(session);
       const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade };
-      const config = parse(configSchema, await encryptedPost(session, 'Question/Config', params, options), '考试配置');
-      if (config.config?.CloseCF === true) throw new ProviderError('NOT_FOUND', '本场考试主办方已关闭');
-      const subjects = parse(subjectsSchema, await encryptedPost(session, 'Question/Subjects', params, options), '科目列表');
+      const config = parse(
+        configSchema,
+        await encryptedPost(session, 'Question/Config', params, options),
+        '考试配置',
+      );
+      if (config.config?.CloseCF === true)
+        throw new ProviderError('NOT_FOUND', '本场考试主办方已关闭');
+      const subjects = parse(
+        subjectsSchema,
+        await encryptedPost(session, 'Question/Subjects', params, options),
+        '科目列表',
+      );
       if (!config.charge) throw new ProviderError('UNKNOWN', '七天学堂考试配置缺少权限信息');
       // code === -1 表示该科目不可用；总分行的 code 是 -2，属正常行。
       const rows = subjects.list.filter((item) => item.code !== -1);
@@ -556,35 +939,64 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         info = info ?? report.km_info;
         for (const row of report.km_list ?? []) if (!merged.has(row.km)) merged.set(row.km, row);
       };
-      collect(parse(reportSchema, await encryptedPost(session, 'Question/ScoreReport', {
-        ...params, km: '总分',
-      }, options), '成绩明细'));
+      collect(
+        parse(
+          reportSchema,
+          await encryptedPost(
+            session,
+            'Question/ScoreReport',
+            {
+              ...params,
+              km: '总分',
+            },
+            options,
+          ),
+          '成绩明细',
+        ),
+      );
       // 兜底补取彼此独立且 collect 是同步归并（科目名各不相同），并发执行缩短串行往返等待。
       const missing = scoreable.filter((subject) => !merged.has(subject.km));
-      await Promise.all(missing.map((subject) => encryptedPost(session, 'Question/ScoreReport', {
-        ...params, km: subject.km,
-      }, options).then((data) => collect(parse(reportSchema, data, '成绩明细')))));
+      await Promise.all(
+        missing.map((subject) =>
+          encryptedPost(
+            session,
+            'Question/ScoreReport',
+            {
+              ...params,
+              km: subject.km,
+            },
+            options,
+          ).then((data) => collect(parse(reportSchema, data, '成绩明细'))),
+        ),
+      );
       const total = merged.get('总分') ?? [...merged.values()].find((row) => row.kmTag === -2);
       const rawTotalScore = numericScore(total?.score ?? info?.score);
       const scaledTotalScore = assignedScore(total);
       const totalScore = scaledTotalScore ?? rawTotalScore;
-      const maxTotalScore = numericScore(scaledTotalScore !== undefined ? total?.fuFullScore : undefined)
-        ?? numericScore(total?.fullScore ?? info?.fullScore);
-      const absentSubjects = new Set(subjects.list.filter((item) => item.codeDesc === '缺考科目').map((item) => item.km));
+      const maxTotalScore =
+        numericScore(scaledTotalScore !== undefined ? total?.fuFullScore : undefined) ??
+        numericScore(total?.fullScore ?? info?.fullScore);
+      const absentSubjects = new Set(
+        subjects.list.filter((item) => item.codeDesc === '缺考科目').map((item) => item.km),
+      );
       // 缺考科目即便没有成绩行，也保留其明确状态供界面展示。
       for (const subject of subjects.list) {
-        if (absentSubjects.has(subject.km) && !merged.has(subject.km)) merged.set(subject.km, { km: subject.km, score: '缺考' });
+        if (absentSubjects.has(subject.km) && !merged.has(subject.km))
+          merged.set(subject.km, { km: subject.km, score: '缺考' });
       }
       const published = subjects.exam_info?.queryTime?.replace(/\//g, '-');
       // 考生人数是字符串（如 "512"），复用保守解析。
       const participantCount = numericScore(subjects.exam_info?.studentCount);
       // 先保留 Subjects 内嵌作文数据；缺失时在科目详情按需补取 ThScoreInfo。
-      const essayBySubject = new Map(subjects.list
-        .filter((item) => item.ai_essay_report?.essayThInfo)
-        .map((item) => [item.km, item.ai_essay_report!.essayThInfo!]));
+      const essayBySubject = new Map(
+        subjects.list
+          .filter((item) => item.ai_essay_report?.essayThInfo)
+          .map((item) => [item.km, item.ai_essay_report!.essayThInfo!]),
+      );
       const totalGrade = (total?.grade ?? info?.grade ?? '').trim().toUpperCase();
       return {
-        examId, examName: exam.examName,
+        examId,
+        examName: exam.examName,
         isUnion: subjects.exam_info?.isUnion,
         grade: totalGrade && totalGrade !== '-' ? totalGrade : undefined,
         gradePercentile: gradePercentileText(totalGrade),
@@ -604,12 +1016,25 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               if (subject?.srcKm) context.srcKm = subject.srcKm;
               if (exam.ruleHash) context.ruleHash = exam.ruleHash;
               // 考试级发布类型：小程序接口面的作文接口要求携带，与 ruleHash 同样按考试级字段处理。
-              if (subjects.exam_info?.examPublishType !== undefined) context.examPublishType = String(subjects.exam_info.examPublishType);
+              if (subjects.exam_info?.examPublishType !== undefined)
+                context.examPublishType = String(subjects.exam_info.examPublishType);
               // 考试性质标签：旧版科目统计接口需要 examType。
               if (exam.type) context.examType = exam.type;
               if (row.rating?.trim()) context.rating = row.rating.trim();
-              if ((subject?.ai_essay_report && Object.keys(subject.ai_essay_report).length) || /语文|英语/.test(row.km)) context.hasEssayInfo = 'true';
-              for (const field of ['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount'] as const) {
+              if (
+                (subject?.ai_essay_report && Object.keys(subject.ai_essay_report).length) ||
+                /语文|英语/.test(row.km)
+              )
+                context.hasEssayInfo = 'true';
+              for (const field of [
+                'th',
+                'score',
+                'full',
+                'avg',
+                'max',
+                'diff',
+                'highCount',
+              ] as const) {
                 if (essay?.[field] !== undefined) context[`essay_${field}`] = essay[field];
               }
             }
@@ -623,45 +1048,114 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
               if (rawScore !== undefined) context.originalScore = String(rawScore);
             }
             return {
-              subject: row.km, score: scaledScore ?? rawScore,
-              maxScore: numericScore(scaledScore !== undefined ? row.fuFullScore : undefined) ?? numericScore(row.fullScore),
-              grade: absent ? undefined : gradePercentile !== undefined ? gradeCode : row.rating || row.grade || undefined,
+              subject: row.km,
+              score: scaledScore ?? rawScore,
+              maxScore:
+                numericScore(scaledScore !== undefined ? row.fuFullScore : undefined) ??
+                numericScore(row.fullScore),
+              grade: absent
+                ? undefined
+                : gradePercentile !== undefined
+                  ? gradeCode
+                  : row.rating || row.grade || undefined,
               ...(absent ? { status: 'absent' as const } : {}),
               ...(Object.keys(context).length ? { providerContext: context } : {}),
             };
           }),
-        totalScore, maxTotalScore: maxTotalScore ?? 0,
-        ...(scaledTotalScore !== undefined && rawTotalScore !== undefined ? { originalTotalScore: rawTotalScore } : {}),
+        totalScore,
+        maxTotalScore: maxTotalScore ?? 0,
+        ...(scaledTotalScore !== undefined && rawTotalScore !== undefined
+          ? { originalTotalScore: rawTotalScore }
+          : {}),
         ...(participantCount !== undefined ? { participantCount } : {}),
         // 联考的等第百分比是校内排名比例，容易被误读为联考范围；顶部给出可关闭说明。
         ...(subjects.exam_info?.isUnion === true
-          ? { notice: { id: 'septnet-union-grade-scope', text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。' } }
+          ? {
+              notice: {
+                id: 'septnet-union-grade-scope',
+                text: '等第及对应的百分比值所表示的是在学校内的排名比例，并非联考的排名比例。',
+              },
+            }
           : {}),
-        ...(scaledTotalScore !== undefined ? { originalMaxTotalScore: numericScore(total?.fullScore ?? info?.fullScore) } : {}),
+        ...(scaledTotalScore !== undefined
+          ? { originalMaxTotalScore: numericScore(total?.fullScore ?? info?.fullScore) }
+          : {}),
         // 平台不提供名次（只有等级位置，且非会员被拦截）：保持 undefined。
         ranking: undefined,
         publishedAt: published,
       };
     },
-    async getSubjectDetail(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions) {
-      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
-      const subject = result.subjects.find((item) => item.id === subjectId || item.subject === subjectId);
-      if (!subject || subject.status === 'absent') throw new ProviderError('NOT_FOUND', '该科目不可用或已标记缺考');
+    async getSubjectDetail(
+      session,
+      examId,
+      subjectId,
+      cachedResult,
+      options?: ProviderRequestOptions,
+    ) {
+      const result =
+        cachedResult?.examId === examId
+          ? cachedResult
+          : await this.getExamResult(session, examId, options);
+      const subject = result.subjects.find(
+        (item) => item.id === subjectId || item.subject === subjectId,
+      );
+      if (!subject || subject.status === 'absent')
+        throw new ProviderError('NOT_FOUND', '该科目不可用或已标记缺考');
       const target = context(session);
       const ctx = subject.providerContext ?? {};
-      const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade,
-        schoolRuCode: target.ruCode, km: subject.subject, srcKm: ctx.srcKm ?? subject.subject };
+      const params = {
+        examGuid: examId,
+        schoolGuid: target.schoolGuid,
+        grade: target.grade,
+        schoolRuCode: target.ruCode,
+        km: subject.subject,
+        srcKm: ctx.srcKm ?? subject.subject,
+      };
       const reportSections: ReportSection[] = [];
       const notices: string[] = [];
-      const embeddedEssay = Object.fromEntries(['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount']
-        .flatMap((field) => ctx[`essay_${field}`] !== undefined ? [[field, ctx[`essay_${field}`]]] : []));
+      const embeddedEssay = Object.fromEntries(
+        ['th', 'score', 'full', 'avg', 'max', 'diff', 'highCount'].flatMap((field) =>
+          ctx[`essay_${field}`] !== undefined ? [[field, ctx[`essay_${field}`]]] : [],
+        ),
+      );
       const [essay, distribution] = await Promise.all([
-        ctx.hasEssayInfo && ctx.ruleHash && !['score', 'full', 'avg', 'max', 'highCount'].every((field) => numericScore(embeddedEssay[field]) !== undefined)
-          ? optionalReport(async () => parse(essayResponseSchema, await encryptedPost(session, 'Question/ThScoreInfo',
-            { ...params, ruleHash: ctx.ruleHash }, options), '作文统计').essayThInfo, '作文统计', options)
+        ctx.hasEssayInfo &&
+        ctx.ruleHash &&
+        !['score', 'full', 'avg', 'max', 'highCount'].every(
+          (field) => numericScore(embeddedEssay[field]) !== undefined,
+        )
+          ? optionalReport(
+              async () =>
+                parse(
+                  essayResponseSchema,
+                  await encryptedPost(
+                    session,
+                    'Question/ThScoreInfo',
+                    { ...params, ruleHash: ctx.ruleHash },
+                    options,
+                  ),
+                  '作文统计',
+                ).essayThInfo,
+              '作文统计',
+              options,
+            )
           : Promise.resolve({ data: undefined, notice: undefined }),
-        ctx.ruleHash && ctx.responseGuid ? optionalReport(async () => parse(distributionSchema,
-          await encryptedPost(session, 'Question/SubjectTHDistri', { ...params, ruleHash: ctx.ruleHash, responseGuid: ctx.responseGuid }, options), '题目分布'), '题目分布', options)
+        ctx.ruleHash && ctx.responseGuid
+          ? optionalReport(
+              async () =>
+                parse(
+                  distributionSchema,
+                  await encryptedPost(
+                    session,
+                    'Question/SubjectTHDistri',
+                    { ...params, ruleHash: ctx.ruleHash, responseGuid: ctx.responseGuid },
+                    options,
+                  ),
+                  '题目分布',
+                ),
+              '题目分布',
+              options,
+            )
           : Promise.resolve({ data: undefined, notice: undefined }),
       ]);
       const essayReport = essaySection({ ...embeddedEssay, ...essay.data });
@@ -670,60 +1164,143 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
       const distributionReport = distribution.data && distributionSection(distribution.data);
       if (distributionReport) reportSections.push(distributionReport);
       else if (distribution.notice) notices.push(distribution.notice);
-      if (notices.length) reportSections.push({ id: 'septnet-extra-status', title: '附加信息', notes: notices });
+      if (notices.length)
+        reportSections.push({ id: 'septnet-extra-status', title: '附加信息', notes: notices });
       // 作文统计统一放入报告卡片，避免旧页头的 avg/max 文案重复显示。
-      const providerContext = Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== 'essayAvg' && key !== 'essayMax'));
-      return { subjectId, subject: subject.subject, score: subject.score, maxScore: subject.maxScore, grade: subject.grade,
-        providerContext, reportSections };
+      const providerContext = Object.fromEntries(
+        Object.entries(ctx).filter(([key]) => key !== 'essayAvg' && key !== 'essayMax'),
+      );
+      return {
+        subjectId,
+        subject: subject.subject,
+        score: subject.score,
+        maxScore: subject.maxScore,
+        grade: subject.grade,
+        providerContext,
+        reportSections,
+      };
     },
     // 小程序接口面（szone-public）的原卷：按科目返回原卷扫描图，地址为短期签名直链，界面过期后重取。
-    async getPaperImages(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<AnswerSheet[]> {
-      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+    async getPaperImages(
+      session,
+      examId,
+      subjectId,
+      cachedResult,
+      options?: ProviderRequestOptions,
+    ): Promise<AnswerSheet[]> {
+      const result =
+        cachedResult?.examId === examId
+          ? cachedResult
+          : await this.getExamResult(session, examId, options);
       const subject = locateSubject(result, subjectId);
       if (!subject) throw new ProviderError('NOT_FOUND', '该科目不可用或已标记缺考');
       const target = context(session);
       const ctx = subject.providerContext ?? {};
-      const data = parse(paperSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/Paper', {
-        examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
-        km: subject.subject, srcKm: ctx.srcKm ?? subject.subject,
-      }, options), '试卷原卷');
+      const data = parse(
+        paperSchema,
+        await publicPost(
+          session,
+          'publicszoneui.service/QuestionNService/Paper',
+          {
+            examGuid: examId,
+            schoolGuid: target.schoolGuid,
+            grade: target.grade,
+            schoolRuCode: target.ruCode,
+            km: subject.subject,
+            srcKm: ctx.srcKm ?? subject.subject,
+          },
+          options,
+        ),
+        '试卷原卷',
+      );
       // 原卷是空白试卷扫描件，不含个人作答与得分标注。
-      return data.flatMap((paper) => paper.imgUrls ?? [])
+      return data
+        .flatMap((paper) => paper.imgUrls ?? [])
         .map((url) => ({ subject: subject.subject, subjectId, url, watermarked: false }));
     },
     /**
      * 小程序接口面的作文数据：题干全文 + 本人作答切图（作答图与答题卡同源，标记为含水印）。
      * 统计卡片沿用 `Question/ThScoreInfo` 的既有实现，这里只补题干与图片；缺参数时安静降级。
      */
-    async getEssayDetail(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<EssayDetail> {
+    async getEssayDetail(
+      session,
+      examId,
+      subjectId,
+      cachedResult,
+      options?: ProviderRequestOptions,
+    ): Promise<EssayDetail> {
       const empty: EssayDetail = { answerSheets: [] };
-      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+      const result =
+        cachedResult?.examId === examId
+          ? cachedResult
+          : await this.getExamResult(session, examId, options);
       const subject = locateSubject(result, subjectId);
       if (!subject) return empty;
       const ctx = subject.providerContext ?? {};
       if (ctx.hasEssayInfo !== 'true') return empty;
       const target = context(session);
       const srcKm = ctx.srcKm ?? subject.subject;
-      const base = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade,
-        schoolRuCode: target.ruCode, km: subject.subject, srcKm,
-        subject: subject.subject, srcSubject: srcKm, examPublishType: ctx.examPublishType ?? '' };
+      const base = {
+        examGuid: examId,
+        schoolGuid: target.schoolGuid,
+        grade: target.grade,
+        schoolRuCode: target.ruCode,
+        km: subject.subject,
+        srcKm,
+        subject: subject.subject,
+        srcSubject: srcKm,
+        examPublishType: ctx.examPublishType ?? '',
+      };
       const [report, stem] = await Promise.all([
         ctx.responseGuid && ctx.examPublishType !== undefined
-          ? optionalReport(async () => parse(essayReportSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/AIEssayReport',
-            { ...base, responseGuid: ctx.responseGuid, asiResponse: ctx.responseGuid }, options), '作文作答'), '作文作答', options)
+          ? optionalReport(
+              async () =>
+                parse(
+                  essayReportSchema,
+                  await publicPost(
+                    session,
+                    'publicszoneui.service/QuestionNService/AIEssayReport',
+                    { ...base, responseGuid: ctx.responseGuid, asiResponse: ctx.responseGuid },
+                    options,
+                  ),
+                  '作文作答',
+                ),
+              '作文作答',
+              options,
+            )
           : Promise.resolve({ data: undefined, notice: undefined }),
         // 实测：题干接口同样要求 responseGuid（缺它返回 400）。
         ctx.essay_th && ctx.responseGuid
-          ? optionalReport(async () => parse(essayStemSchema, await publicPost(session, 'publicszoneui.service/QuestionNService/EssayQuestionStem',
-            { ...base, th: ctx.essay_th!, type: '1', responseGuid: ctx.responseGuid }, options), '作文题干'), '作文题干', options)
+          ? optionalReport(
+              async () =>
+                parse(
+                  essayStemSchema,
+                  await publicPost(
+                    session,
+                    'publicszoneui.service/QuestionNService/EssayQuestionStem',
+                    { ...base, th: ctx.essay_th!, type: '1', responseGuid: ctx.responseGuid },
+                    options,
+                  ),
+                  '作文题干',
+                ),
+              '作文题干',
+              options,
+            )
           : Promise.resolve({ data: undefined, notice: undefined }),
       ]);
       const prompt = stem.data?.questionStemTxt?.trim();
       // 作答切图缺失时退回平台下发的 PDF 分页图，两者都来自同一份作答扫描。
-      const images = report.data?.myAnswers?.length ? report.data.myAnswers : (report.data?.pdfImgs ?? []);
+      const images = report.data?.myAnswers?.length
+        ? report.data.myAnswers
+        : (report.data?.pdfImgs ?? []);
       return {
         ...(prompt ? { prompt } : {}),
-        answerSheets: images.map((url) => ({ subject: subject.subject, subjectId, url, watermarked: true })),
+        answerSheets: images.map((url) => ({
+          subject: subject.subject,
+          subjectId,
+          url,
+          watermarked: true,
+        })),
       };
     },
     /**
@@ -734,23 +1311,62 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
      * 科目级统计：校内参加本科目考试的考生人数（平台旧版接口的 `report.total`，已由项目负责人确认语义）。
      * 取数需要先换考号，且只对本人有权查看的科目有效；任一环节不可用即返回空数组，不阻断科目详情。
      */
-    async getSubjectStatistics(session, examId, subjectId, cachedResult, options?: ProviderRequestOptions): Promise<SubjectStatistic[]> {
-      const result = cachedResult?.examId === examId ? cachedResult : await this.getExamResult(session, examId, options);
+    async getSubjectStatistics(
+      session,
+      examId,
+      subjectId,
+      cachedResult,
+      options?: ProviderRequestOptions,
+    ): Promise<SubjectStatistic[]> {
+      const result =
+        cachedResult?.examId === examId
+          ? cachedResult
+          : await this.getExamResult(session, examId, options);
       const subject = locateSubject(result, subjectId);
       const target = context(session);
       const ctx = subject?.providerContext ?? {};
       if (!subject || !ctx.examType || !target.ruCode) return [];
-      const params = { examGuid: examId, schoolGuid: target.schoolGuid, grade: target.grade, schoolRuCode: target.ruCode,
-        ruCode: target.ruCode, examType: ctx.examType, examSchoolGuid: target.schoolGuid,
-        subject: subject.subject, subjectCount: String(result.subjects.length) };
+      const params = {
+        examGuid: examId,
+        schoolGuid: target.schoolGuid,
+        grade: target.grade,
+        schoolRuCode: target.ruCode,
+        ruCode: target.ruCode,
+        examType: ctx.examType,
+        examSchoolGuid: target.schoolGuid,
+        subject: subject.subject,
+        subjectCount: String(result.subjects.length),
+      };
       try {
-        const redirect = parse(studentCodeSchema, await publicPost(session, 'publicszoneui.service/AIErrorBookService/Redirect', {
-          ruCode: target.ruCode, examGuid: examId, studentCode: '', schoolGuid: target.schoolGuid,
-          examSchoolGuid: target.schoolGuid, grade: target.grade, from: '1',
-        }, options), '科目统计');
+        const redirect = parse(
+          studentCodeSchema,
+          await publicPost(
+            session,
+            'publicszoneui.service/AIErrorBookService/Redirect',
+            {
+              ruCode: target.ruCode,
+              examGuid: examId,
+              studentCode: '',
+              schoolGuid: target.schoolGuid,
+              examSchoolGuid: target.schoolGuid,
+              grade: target.grade,
+              from: '1',
+            },
+            options,
+          ),
+          '科目统计',
+        );
         if (!redirect.studentCode) return [];
-        const grade = parse(subjectGradeSchema, await publicPost(session, 'publicszoneui.service/QuestionService/SubjectGrade',
-          { ...params, studentCode: redirect.studentCode }, options), '科目统计');
+        const grade = parse(
+          subjectGradeSchema,
+          await publicPost(
+            session,
+            'publicszoneui.service/QuestionService/SubjectGrade',
+            { ...params, studentCode: redirect.studentCode },
+            options,
+          ),
+          '科目统计',
+        );
         const total = grade.report?.total;
         // 0 或负数不是有效人数，视为未提供。
         if (total === undefined || total <= 0) return [];
@@ -758,9 +1374,14 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         // 预估排名 = 参考人数 × 等第比例带（从高到低），上下界向上取整；未知等第不推算。
         const band = gradeBand(subject.grade);
         if (band) {
-          const lower = Math.max(1, Math.ceil(total * band.min / 100));
-          const upper = Math.min(total, Math.ceil(total * band.max / 100));
-          statistics.push({ scope: '学校', rank: lower, rankMax: Math.max(lower, upper), estimate: true });
+          const lower = Math.max(1, Math.ceil((total * band.min) / 100));
+          const upper = Math.min(total, Math.ceil((total * band.max) / 100));
+          statistics.push({
+            scope: '学校',
+            rank: lower,
+            rankMax: Math.max(lower, upper),
+            estimate: true,
+          });
         }
         return statistics;
       } catch (error) {
@@ -769,15 +1390,29 @@ export function createSeptnetProvider(options: SeptnetOptions = {}): ScoreProvid
         return [];
       }
     },
-    async getAnswerSheets(session, examId, subjectId, _cachedResult, options?: ProviderRequestOptions) {
+    async getAnswerSheets(
+      session,
+      examId,
+      subjectId,
+      _cachedResult,
+      options?: ProviderRequestOptions,
+    ) {
       return answerCardSheets(session, examId, subjectId, false, options);
     },
     // 官方客户端行为：`AnswerCardUrl` 以 isWatermark=true 再取一次，得到图片上标注了各题得分的版本；
     // 与 isWatermark=false 的干净扫描件是两套独立 URL，互不影响。
-    async getWatermarkedAnswerSheets(session, examId, subjectId, _cachedResult, options?: ProviderRequestOptions) {
+    async getWatermarkedAnswerSheets(
+      session,
+      examId,
+      subjectId,
+      _cachedResult,
+      options?: ProviderRequestOptions,
+    ) {
       return answerCardSheets(session, examId, subjectId, true, options);
     },
-    async logout(session) { revoked.add(session); },
+    async logout(session) {
+      revoked.add(session);
+    },
   };
 }
 
