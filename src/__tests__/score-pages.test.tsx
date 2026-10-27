@@ -12,6 +12,7 @@ import {
   zhixueTrendSections,
 } from '../providers/zhixue-report';
 import { useAppStore } from '../state/app';
+import { balanceSection } from '../providers/zhixue-v25';
 import { providerRegistry } from '../providers/registry';
 import { ScoreDisplaySettings } from '../score-display-settings';
 import type { GradeDisplayMode } from '../services/score-display';
@@ -443,6 +444,29 @@ it('renders and expands Zhixue trend, diagnosis and empty-table knowledge summar
   }
 });
 
+it('renders signed balance values with a zero reference instead of a 0-100 percentile label', async () => {
+  const previous = mockResult.reportSections;
+  mockResult.reportSections = [
+    balanceSection({
+      list: [
+        { subjectName: '虚构物理', thisLevel: -3.2, usualLevel: -3.2, mediumLevel: 0 },
+        { subjectName: '虚构英语', thisLevel: -4.9, usualLevel: -4.9, mediumLevel: 0 },
+      ],
+    }),
+  ];
+  try {
+    await act(async () => root.render(<Result />));
+    expect(container.querySelector('svg')?.getAttribute('aria-label')).toBe(
+      '学科水平雷达图，刻度-5至5',
+    );
+    expect(container.textContent).not.toContain('水平范围');
+    expect(container.querySelector('[aria-label="虚构物理 本次水平-3.2"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="虚构英语 本次水平-4.9"]')).not.toBeNull();
+    expect(container.textContent).not.toContain('平时水平');
+  } finally {
+    mockResult.reportSections = previous;
+  }
+});
 it('uses the selected list name for a fallback title across rerenders and lets the only subject occupy the full row', async () => {
   const previous = { ...mockResult };
   mockProviderId = 'zhixue';

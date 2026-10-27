@@ -64,6 +64,15 @@ function setup(handler?: Handler) {
     if (body === undefined) {
       if (url.pathname.endsWith('/getUserInfo')) body = { errorCode: 0, result: user };
       else if (url.pathname.endsWith('/academicYear')) body = { errorCode: 0, result: years };
+      else if (url.pathname.endsWith('/getModules'))
+        body = {
+          errorCode: 0,
+          result: [
+            { code: 'completeReportMain' },
+            { code: 'examLevelTrend' },
+            { code: 'examSubjectDiagnosis' },
+          ],
+        };
       else if (
         url.pathname.includes('RoutingHost') ||
         url.pathname.endsWith('/getHostByBusinessId')
@@ -199,6 +208,167 @@ it('rejects role mismatches and student snapshots without an explicit account id
       providerContext: { ...session.providerContext, userType: 'STUDENT' },
     }),
   ).rejects.toMatchObject({ code: 'RESTRICTED' });
+});
+it('uses mixed official modules for v25 results, blocks closed analysis and preserves legacy metadata', async () => {
+  const encoded = await examId();
+  const perms = { showScoreFlag: true, showLevelFlag: true };
+  const controls = { setLevel: true, showDownloadOriginalPaper: true, showKnowledge: false };
+  const modernSheet = {
+    ...sheetFixture,
+    sheetImages: ['https://fictional-storage.example/page-1.png'],
+    showSingleCorrectTag: false,
+    sheetDatas: JSON.stringify({
+      userAnswerRecordDTO: {
+        answerRecordDetails: [
+          {
+            topicNumber: 1,
+            dispTitle: '1',
+            score: 0,
+            standardScore: 4,
+            isCandidate: false,
+            isSelected: '',
+            subTopics: '',
+            answerType: 's01Text',
+            answer: 'B',
+          },
+        ],
+      },
+    }),
+  };
+  const { provider, transport } = setup((url) => {
+    if (url.pathname.startsWith('/api-parentReport/')) {
+      if (url.pathname.endsWith('/getModules'))
+        return {
+          errorCode: 0,
+          result: (url.searchParams.get('tag') === 'ZXB_REPORT_PAPER_V25'
+            ? [
+                'completeReportMain_v2025',
+                'paperLevelTrend_v2025',
+                'topicAnswerSituation_v2025',
+                'paperCheckSheet_v2025',
+                'paperAnalysis_v2025',
+              ]
+            : ['completeReportMain_v2025', 'examSubjectBalance_v2025', 'examLevelTrend']
+          ).map((code) => ({ code })),
+        };
+      if (url.pathname.endsWith('/queryModuleIndicatorPermission'))
+        return { errorCode: 0, result: perms };
+      if (url.pathname.endsWith('/getReportMain'))
+        return {
+          errorCode: 0,
+          result: {
+            paperList: [
+              {
+                ...controls,
+                paperId: 'paper',
+                subjectName: '虚构物理',
+                subjectCode: '05',
+                userLevel: 'C',
+                userScore: 41,
+                standardScore: 100,
+              },
+              { ...controls, paperId: 'en', subjectName: '虚构英语' },
+              { ...controls, paperId: 'math', subjectName: '虚构数学' },
+            ],
+            totalScore: { userLevel: '2B/1C', setLevel: false, userScore: 100, standardScore: 300 },
+          },
+        };
+      if (url.pathname.endsWith('/getSubjectBalance'))
+        return {
+          errorCode: 0,
+          result: { list: [{ subjectName: '虚构物理', thisLevel: -3.2, mediumLevel: 0 }] },
+        };
+      if (url.pathname.endsWith('/getLevelTrend'))
+        return {
+          errorCode: 0,
+          result: { list: [{ dataList: [{ id: 'paper', level: 'E', name: '本次' }] }] },
+        };
+      if (url.pathname.endsWith('/getCheckSheet')) return { errorCode: 0, result: modernSheet };
+      if (url.pathname.endsWith('/getAnswerInfo'))
+        return {
+          errorCode: 0,
+          result: {
+            answerInfoDTOList: [
+              { topicNumber: 1, dispTitle: '1', score: 0, standardScore: 4, gradeAvgScore: 2.345 },
+            ],
+          },
+        };
+      throw new Error('Unapproved modern request');
+    }
+    if (url.pathname.endsWith('/getLevelTrend'))
+      return {
+        errorCode: 0,
+        result: {
+          list: [
+            {
+              tag: { code: 'clazz' },
+              dataList: [{ id: url.searchParams.get('examId'), level: 'D等' }],
+            },
+          ],
+        },
+      };
+  });
+  const result = await provider.getExamResult(session, encoded);
+  expect(result.grade).toBe('2B/1C');
+  expect(result.notice).toBeUndefined();
+  expect(result.reportSections?.map((s) => s.id)).toEqual([
+    'zhixue-trend',
+    'zhixue-subject-balance',
+  ]);
+  expect(result.reportSections?.find((s) => s.radar)?.radar?.scale).toEqual({
+    min: -4,
+    max: 4,
+    reference: 0,
+  });
+  const detail = await provider.getSubjectDetail!(session, encoded, 'paper', result);
+  expect(detail.questions?.[0]).toMatchObject({ id: '1', score: 0, myAnswer: 'B' });
+  expect(detail.questionNotice).toBeUndefined();
+  expect(detail.questions?.[0].answer).toBeUndefined();
+  expect(detail.reportSections).toEqual([]);
+  expect(detail.questions?.[0].providerContext?.schoolAverage).toBe('2.35');
+  expect(detail.statistics).toEqual([{ scope: '学校', averageScore: 2.35 }]);
+  expect(
+    transport.mock.calls.some(
+      ([u]) => new URL(String(u)).pathname === '/api-parentReport/report/exam/getLevelTrend',
+    ),
+  ).toBe(false);
+  expect(
+    transport.mock.calls.some(([u]) =>
+      new URL(String(u)).pathname.endsWith('/getKnowledgeHoldInfo'),
+    ),
+  ).toBe(false);
+  expect(await provider.getAnswerSheets!(session, encoded, 'paper', result)).toHaveLength(1);
+  expect(
+    transport.mock.calls.some(([u]) => new URL(String(u)).pathname.endsWith('/getPaperAnalysis')),
+  ).toBe(false);
+  expect(
+    transport.mock.calls.some(([u]) =>
+      new URL(String(u)).pathname.endsWith('/getSubjectDiagnosis'),
+    ),
+  ).toBe(false);
+  for (const [u, init] of transport.mock.calls) {
+    const url = new URL(String(u));
+    if (url.pathname.startsWith('/api-parentReport/')) {
+      expect(new Headers(init!.headers).get('sucUserToken')).toBe(token);
+      expect(url.searchParams.get('token')).toBe(token);
+    }
+  }
+  expect(
+    transport.mock.calls.filter(([u]) => {
+      const url = new URL(String(u));
+      return (
+        url.pathname.endsWith('/getModules') &&
+        url.searchParams.get('tag') === 'ZXB_REPORT_PAPER_V25'
+      );
+    }),
+  ).toHaveLength(2);
+  perms.showScoreFlag = false;
+  perms.showLevelFlag = false;
+  const hidden = await provider.getExamResult(session, encoded);
+  expect(hidden.subjects[0].score).toBeUndefined();
+  expect(hidden.subjects[0].grade).toBeUndefined();
+  expect(hidden.totalScore).toBeUndefined();
+  expect(hidden.originalTotalScore).toBeUndefined();
 });
 it.each([
   'https://evil.test/',
@@ -379,7 +549,7 @@ it('does not expose question regions when the current student changes during che
     provider.getQuestionAnswerSheets!(session, encoded, 'paper', '1', cached),
   ).rejects.toMatchObject({ code: 'RESTRICTED' });
 });
-it('adds report sections through the same authenticated transport without reading module configuration', async () => {
+it('adds legacy report sections after checking the official report configuration', async () => {
   const { provider, transport, encoded, cached } = await sheetSetup((url) => {
     if (url.pathname.endsWith('/getLevelTrend'))
       return {
@@ -422,7 +592,7 @@ it('adds report sections through the same authenticated transport without readin
   });
   expect(new Headers(init!.headers).get('XToken')).toBe(token);
   expect(String(input)).not.toContain(token);
-  expect(transport.mock.calls.some(([url]) => String(url).includes('getModules'))).toBe(false);
+  expect(transport.mock.calls.some(([url]) => String(url).includes('getModules'))).toBe(true);
 });
 it('preserves subject reports when school checksheet access is closed', async () => {
   const { provider, encoded, cached } = await sheetSetup((url) => {

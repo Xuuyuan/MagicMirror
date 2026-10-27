@@ -23,6 +23,19 @@ import {
   zhixueSheets,
 } from './zhixue-checksheet';
 import { zhixueReportSections } from './zhixue-report';
+import {
+  resolveReportPlan,
+  parseReportPlan,
+  paperReportPlan,
+  readControls,
+  v25Controls,
+  v25Sections,
+  v25Questions,
+  v25AverageScore,
+  v25ObjectAnswers,
+  normalizeV25Sheet,
+  type ZhixueReportPlan,
+} from './zhixue-v25';
 import type { ProviderRequestOptions, ScoreProvider } from './types';
 
 const id = 'zhixue';
@@ -90,16 +103,21 @@ const scoreSchema = z.object({
   assignStandardScore: metric,
   hasAssignScore: z.boolean().optional(),
   userLevel: z.string().nullish(),
+  setLevel: z.boolean().optional(),
+  tScore: metric,
 });
 const subjectSchema = scoreSchema.extend({
   paperId: identifier,
   subjectName: z.string().min(1),
   subjectCode: z.string().optional(),
+  showDownloadOriginalPaper: z.boolean().optional(),
+  showKnowledge: z.boolean().optional(),
 });
 const resultSchema = z.object({
   title: z.string().optional(),
   paperList: z.array(subjectSchema),
   totalScore: scoreSchema.extend({ examName: z.string().optional() }).nullish(),
+  absentPaperList: z.array(subjectSchema).optional(),
 });
 const examContextSchema = z.object({
   v: z.literal(1),
@@ -174,6 +192,8 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     retried = false,
   ): Promise<unknown> {
     const origin = zhixueOfficialHost(host);
+    const modern = path.startsWith('/api-parentReport/');
+    const query = modern ? { ...params, token } : params;
     const guid = Crypto.randomUUID();
     const timestamp = String(Date.now() - clockOffset);
     // Public signing convention in the official report client, not a user secret.
@@ -185,19 +205,20 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     try {
       response = await requestWithTimeout(
         transport,
-        `${origin}${path}?${new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))}`,
+        `${origin}${path}?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`,
         {
           credentials: 'omit',
           redirect: 'error',
           signal: options?.signal,
           headers: {
-            XToken: token,
-            token,
+            ...(modern ? { sucUserToken: token } : { XToken: token, token }),
             authbizcode: '0001',
             authguid: guid,
             authtimestamp: timestamp,
             authtoken: signature,
-            Referer: `${www}/activitystudy/web-report/index.html`,
+            Referer: modern
+              ? `${www}/parentapp/htmExamReport/index.html`
+              : `${www}/activitystudy/web-report/index.html`,
             Origin: www,
             'User-Agent': 'Mozilla/5.0',
           },
@@ -212,6 +233,8 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
       throw new ProviderError('SESSION_EXPIRED', '智学网登录已失效，请重新官方网页登录');
     if (response.status === 403)
       throw new ProviderError('RESTRICTED', '智学网暂不允许访问，请前往官方页面确认');
+    if (response.status === 404 && path === '/api-parentReport/report/common/getModules')
+      throw new ProviderError('UNSUPPORTED', '智学网未提供新版模块配置');
     if (!response.ok) throw new ProviderError('NETWORK', '智学网服务暂时不可用，请稍后重试', true);
     let raw: unknown;
     try {
@@ -257,6 +280,25 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     if (body.errorCode !== 0)
       throw new ProviderError('UNKNOWN', `智学网请求未完成（${body.errorCode}）`);
     return body.result;
+  }
+  function modernRequest(session: AuthSession, options?: ProviderRequestOptions) {
+    return (path: string, params: Record<string, string | number>) =>
+      request(
+        'https://ali-bg.zhixue.com',
+        '/api-parentReport/report/' + path,
+        session.accessToken,
+        params,
+        options,
+      );
+  }
+  function subjectPlan(subject: SubjectScore): ZhixueReportPlan | undefined {
+    const raw = subject.providerContext?.reportPlan;
+    if (!raw) return undefined;
+    try {
+      return parseReportPlan(JSON.parse(raw));
+    } catch {
+      throw new ProviderError('UNKNOWN', '报告上下文已变化，请刷新考试详情');
+    }
   }
   function context(session: AuthSession) {
     if (
@@ -362,7 +404,27 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     exam: z.infer<typeof examContextSchema>,
     paperId: string,
     options?: ProviderRequestOptions,
+    subject?: SubjectScore,
+    prepared?: Extract<ZhixueReportPlan, { version: 'v25' }>,
   ) {
+    const plan = subject && subjectPlan(subject);
+    if (plan?.version === 'v25') {
+      const config =
+        prepared ?? (await paperReportPlan(modernRequest(session, options), plan, exam.examId));
+      if (
+        !config.modules.includes('paperCheckSheet_v2025') ||
+        !readControls(subject?.providerContext).showDownloadOriginalPaper
+      )
+        throw new ProviderError('RESTRICTED', '智学网未开放本场考试的答题图像');
+      const raw = normalizeV25Sheet(
+        await modernRequest(session, options)('paper/getCheckSheet', {
+          examId: exam.examId,
+          paperId,
+        }),
+      );
+      await verify(session, options);
+      return raw;
+    }
     const host = await examHost(session, exam.examId, options);
     const raw = await request(
       host,
@@ -386,7 +448,58 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     options?: ProviderRequestOptions,
     host?: string,
     subject?: SubjectScore,
+    plan?: ZhixueReportPlan,
+    controls?: { setLevel: boolean; grade?: string; subjectCount: number; standard?: boolean },
+    prepared?: Extract<ZhixueReportPlan, { version: 'v25' }>,
   ) {
+    if (plan?.version === 'v25') {
+      const config =
+        prepared ??
+        (subject
+          ? await paperReportPlan(modernRequest(session, options), plan, exam.examId)
+          : plan);
+      const fields = subject ? readControls(subject.providerContext) : controls;
+      const sections = await v25Sections(
+        modernRequest(session, options),
+        config,
+        {
+          examId: exam.examId,
+          paperId: subject?.id,
+          subjectCode: subject?.providerContext?.subjectCode,
+          start: exam.start,
+          end: exam.end,
+          setLevel: fields?.setLevel ?? false,
+          grade: subject?.grade ?? controls?.grade,
+          subjectCount: controls?.subjectCount ?? 0,
+          standard: subject
+            ? subject.providerContext?.hasStandardTrend === 'true'
+            : controls?.standard,
+        },
+        options?.signal,
+      );
+      const oldCode = subject ? 'paperLevelTrend' : 'examLevelTrend';
+      if (
+        config.modules.includes(oldCode) &&
+        (!config.permissions.showLevelFlag || !fields?.setLevel)
+      ) {
+        sections.unshift(
+          ...(await zhixueReportSections(
+            (path, params) =>
+              request(host ?? context(session).host, path, session.accessToken, params, options),
+            {
+              examId: exam.examId,
+              paperId: subject?.id,
+              subjectCode: subject?.providerContext?.subjectCode,
+              start: exam.start,
+              end: exam.end,
+              features: { trend: true, diagnosis: false, knowledge: false },
+            },
+            options?.signal,
+          )),
+        );
+      }
+      return sections;
+    }
     let route: Promise<string> | undefined;
     return zhixueReportSections(
       async (path, params) => {
@@ -585,31 +698,56 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
       const data = await verify(session, options);
       const exam = decodeExam(examId, data.studentId);
       const host = await examHost(session, exam.examId, options);
+      const plan = await resolveReportPlan(
+        modernRequest(session, options),
+        (path, params) => request(host, path, session.accessToken, params, options),
+        exam.examId,
+      );
+      const canScore =
+        plan.version === 'legacy' ||
+        (plan.modules.includes('completeReportMain_v2025') && plan.permissions.showScoreFlag);
+      const canLevel =
+        plan.version === 'legacy' ||
+        (plan.modules.includes('completeReportMain_v2025') && plan.permissions.showLevelFlag);
       const main = parse(
         resultSchema,
-        await request(
-          host,
-          '/zhixuebao/report/exam/getReportMain',
-          session.accessToken,
-          { examId: exam.examId },
-          options,
-        ),
+        plan.version === 'v25'
+          ? await modernRequest(session, options)('exam/getReportMain', { examId: exam.examId })
+          : await request(
+              host,
+              '/zhixuebao/report/exam/getReportMain',
+              session.accessToken,
+              { examId: exam.examId },
+              options,
+            ),
         '主报告',
       );
+      if (plan.version === 'v25') main.paperList.forEach((p) => parse(v25Controls, p, '科目权限'));
       const subjects: SubjectScore[] = main.paperList.map((paper) => ({
         id: paper.paperId,
         subject: paper.subjectName,
-        score: number(paper.userScore),
+        score: canScore ? number(paper.userScore) : undefined,
         maxScore: maxScore(paper),
-        grade: paper.userLevel || undefined,
-        ...(paper.subjectCode ||
+        grade: canLevel ? paper.userLevel || undefined : undefined,
+        ...(plan.version === 'v25' ||
+        paper.subjectCode ||
         (paper.hasAssignScore &&
           number(paper.preAssignScore) !== undefined &&
           number(paper.userScore) !== undefined)
           ? {
               providerContext: {
+                ...(plan.version === 'v25'
+                  ? {
+                      reportPlan: JSON.stringify(plan),
+                      hasStandardTrend: String(number(paper.tScore) !== undefined),
+                      setLevel: String(paper.setLevel),
+                      showDownloadOriginalPaper: String(paper.showDownloadOriginalPaper),
+                      showKnowledge: String(paper.showKnowledge),
+                    }
+                  : {}),
                 ...(paper.subjectCode ? { subjectCode: paper.subjectCode } : {}),
-                ...(paper.hasAssignScore &&
+                ...(canScore &&
+                paper.hasAssignScore &&
                 number(paper.preAssignScore) !== undefined &&
                 number(paper.userScore) !== undefined
                   ? {
@@ -621,6 +759,9 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
             }
           : {}),
       }));
+      if (plan.version === 'v25')
+        for (const paper of main.absentPaperList ?? [])
+          subjects.push({ id: paper.paperId, subject: paper.subjectName, status: 'absent' });
       // A single paper is the whole exam; use its score in the same summary UI.
       // Keep an explicit official total authoritative and never sum multiple papers.
       const total =
@@ -633,15 +774,20 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         subjects,
       };
       if (total) {
-        result.totalScore = number(total.userScore);
+        result.totalScore = canScore ? number(total.userScore) : undefined;
         result.maxTotalScore = maxScore(total);
-        result.grade = total.userLevel || undefined;
-        if (total.hasAssignScore) {
+        result.grade = canLevel ? total.userLevel || undefined : undefined;
+        if (canScore && total.hasAssignScore) {
           result.originalTotalScore = number(total.preAssignScore);
           result.originalMaxTotalScore = number(total.standardScore);
         }
       }
-      result.reportSections = await reports(session, exam, options, host);
+      result.reportSections = await reports(session, exam, options, host, undefined, plan, {
+        setLevel: total?.setLevel ?? false,
+        grade: result.grade,
+        subjectCount: main.paperList.length,
+        standard: number(total?.tScore) !== undefined,
+      });
       await verify(session, options);
       throwIfAborted(options?.signal);
       return result;
@@ -662,6 +808,102 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         grade: subject.grade,
         providerContext: subject.providerContext,
       };
+      const plan = subjectPlan(subject);
+      if (plan?.version === 'v25') {
+        const req = modernRequest(session, options);
+        const config = await paperReportPlan(req, plan, exam.examId);
+        const visibleDetail = {
+          ...detail,
+          score:
+            config.modules.includes('completeReportMain_v2025') && config.permissions.showScoreFlag
+              ? detail.score
+              : undefined,
+          grade:
+            config.modules.includes('completeReportMain_v2025') && config.permissions.showLevelFlag
+              ? detail.grade
+              : undefined,
+          providerContext: config.permissions.showScoreFlag ? detail.providerContext : undefined,
+        };
+        let questions: ReturnType<typeof zhixueQuestions> = { questions: [] };
+        let averageScore: number | undefined;
+        if (
+          config.permissions.showScoreFlag &&
+          config.modules.includes('topicAnswerSituation_v2025')
+        ) {
+          let sheetQuestions: ReturnType<typeof zhixueQuestions>['questions'] = [];
+          let correctAnswers = new Map<string, string>();
+          if (
+            config.modules.includes('paperCheckSheet_v2025') &&
+            readControls(subject.providerContext).showDownloadOriginalPaper
+          ) {
+            try {
+              const sheetRaw = await checksheet(session, exam, subjectId, options, subject, config);
+              sheetQuestions = zhixueQuestions(sheetRaw).questions;
+              correctAnswers = v25ObjectAnswers(sheetRaw);
+            } catch (error) {
+              throwIfAborted(options?.signal);
+              if (!(error instanceof ProviderError) || error.code === 'SESSION_EXPIRED')
+                throw error;
+              // The full-sheet endpoint remains available through getAnswerSheets.
+              // A missing optional region map must not imply that the whole answer
+              // image is unavailable or add a warning above otherwise valid scores.
+            }
+          }
+          const answerInfo = await req('paper/getAnswerInfo', {
+            examId: exam.examId,
+            paperId: subjectId,
+          });
+          averageScore = v25AverageScore(answerInfo);
+          questions = {
+            ...questions,
+            questions: v25Questions(answerInfo, sheetQuestions, correctAnswers),
+          };
+          if (
+            readControls(subject.providerContext).showKnowledge &&
+            readControls(subject.providerContext).showDownloadOriginalPaper &&
+            config.modules.includes('paperAnalysis_v2025')
+          ) {
+            try {
+              questions = zhixueQuestionAnswers(
+                questions.questions,
+                await req('paper/getPaperAnalysis', { examId: exam.examId, paperId: subjectId }),
+              );
+            } catch (error) {
+              throwIfAborted(options?.signal);
+              if (!(error instanceof ProviderError) || error.code === 'SESSION_EXPIRED')
+                throw error;
+              questions.questionNotice = '参考答案暂不可用，已保留小题得分与我的作答。';
+            }
+          }
+        } else questions.questionNotice = '智学网未开放本场考试的小题作答模块';
+        const reportSections = await reports(
+          session,
+          exam,
+          options,
+          undefined,
+          subject,
+          plan,
+          undefined,
+          config,
+        );
+        await verify(session, options);
+        return {
+          ...visibleDetail,
+          ...questions,
+          reportSections,
+          ...(averageScore !== undefined
+            ? {
+                statistics: [
+                  {
+                    scope:
+                      subject.providerContext?.originalScore !== undefined ? '学校原始' : '学校',
+                    averageScore,
+                  },
+                ],
+              }
+            : {}),
+        };
+      }
       const complete = async (parsed: ReturnType<typeof zhixueQuestions>) => {
         const reportSections = await reports(session, exam, options, undefined, subject);
         await verify(session, options);
@@ -708,7 +950,7 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         options,
       );
       return zhixueSheets(
-        await checksheet(session, exam, subjectId, options),
+        await checksheet(session, exam, subjectId, options, subject),
         subjectId,
         subject.subject,
       );
@@ -722,7 +964,7 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         options,
       );
       const sheets = zhixueQuestionSheets(
-        await checksheet(session, exam, subjectId, options),
+        await checksheet(session, exam, subjectId, options, subject),
         subjectId,
         subject.subject,
         questionId,

@@ -332,6 +332,7 @@ export interface ZhixueReportContext {
   end: string;
   paperId?: string;
   subjectCode?: string;
+  features?: { trend: boolean; diagnosis: boolean; knowledge: boolean };
 }
 
 /** Independent optional sections: one unavailable report must not erase scores or other sections. */
@@ -375,49 +376,51 @@ export async function zhixueReportSections(
             ),
       )
       .catch((error: unknown) => fail(id, title, error));
-  work.push(
-    load(
-      'zhixue-trend-unavailable',
-      '近五次成绩变化',
-      `${base}/${context.paperId ? 'paper' : 'exam'}/getLevelTrend`,
-      {
-        ...common,
-        pageIndex: 1,
-        pageSize: 5,
-        startSchoolYear: context.start,
-        endSchoolYear: context.end,
-        ...(context.paperId && context.subjectCode ? { subjectCode: context.subjectCode } : {}),
-      },
-      async (raw) => {
-        const trend = parse(trendSchema, raw);
-        const subjectCode = context.paperId ? context.subjectCode : '00';
-        const rules: TrendRules = {};
-        if (
-          subjectCode &&
-          (trend.scoreLevelType === undefined || trend.scoreLevelType === 'number')
-        ) {
-          await Promise.all(
-            trendScopes.map(async ({ code }) => {
-              if (!trend.list.some((group) => group.tag.code === code && group.dataList.length))
-                return;
-              try {
-                rules[code] = await request('/zhixuebao/report/common/rulesAndCopywriter', {
-                  examId: context.examId,
-                  code,
-                  subjectCode,
-                });
-              } catch (error) {
-                throwIfAborted(signal);
-                if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED') throw error;
-              }
-            }),
-          );
-        }
-        return zhixueTrendSections(raw, rules, context.paperId ?? context.examId);
-      },
-    ),
-  );
-  if (!context.paperId) {
+  if (context.features?.trend !== false)
+    work.push(
+      load(
+        'zhixue-trend-unavailable',
+        '近五次成绩变化',
+        `${base}/${context.paperId ? 'paper' : 'exam'}/getLevelTrend`,
+        {
+          ...common,
+          pageIndex: 1,
+          pageSize: 5,
+          startSchoolYear: context.start,
+          endSchoolYear: context.end,
+          ...(context.paperId && context.subjectCode ? { subjectCode: context.subjectCode } : {}),
+        },
+        async (raw) => {
+          const trend = parse(trendSchema, raw);
+          const subjectCode = context.paperId ? context.subjectCode : '00';
+          const rules: TrendRules = {};
+          if (
+            subjectCode &&
+            (trend.scoreLevelType === undefined || trend.scoreLevelType === 'number')
+          ) {
+            await Promise.all(
+              trendScopes.map(async ({ code }) => {
+                if (!trend.list.some((group) => group.tag.code === code && group.dataList.length))
+                  return;
+                try {
+                  rules[code] = await request('/zhixuebao/report/common/rulesAndCopywriter', {
+                    examId: context.examId,
+                    code,
+                    subjectCode,
+                  });
+                } catch (error) {
+                  throwIfAborted(signal);
+                  if (error instanceof ProviderError && error.code === 'SESSION_EXPIRED')
+                    throw error;
+                }
+              }),
+            );
+          }
+          return zhixueTrendSections(raw, rules, context.paperId ?? context.examId);
+        },
+      ),
+    );
+  if (!context.paperId && context.features?.diagnosis !== false) {
     work.push(
       load(
         'zhixue-diagnosis-unavailable',
@@ -428,7 +431,7 @@ export async function zhixueReportSections(
       ),
     );
   }
-  if (context.paperId) {
+  if (context.paperId && context.features?.knowledge !== false) {
     work.push(
       load(
         'zhixue-knowledge-unavailable',

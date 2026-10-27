@@ -14,11 +14,15 @@ export function RadarChart({ data }: { data: RadarReport }) {
   const size = 360;
   const center = size / 2;
   const radius = 112;
+  const min = data.scale?.min ?? 0;
+  const max = data.scale?.max ?? 100;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return null;
+  const ticks = Array.from({ length: 6 }, (_, i) => min + ((max - min) * i) / 5);
   const point = (index: number, value: number) => {
     const angle = (index * 2 * Math.PI) / data.axes.length - Math.PI / 2;
     return {
-      x: center + (Math.cos(angle) * radius * value) / 100,
-      y: center + (Math.sin(angle) * radius * value) / 100,
+      x: center + (Math.cos(angle) * radius * (value - min)) / (max - min),
+      y: center + (Math.sin(angle) * radius * (value - min)) / (max - min),
     };
   };
   const coordinates = (index: number, value: number) => {
@@ -33,9 +37,9 @@ export function RadarChart({ data }: { data: RadarReport }) {
           width="100%"
           height="100%"
           viewBox={`0 0 ${size} ${size}`}
-          accessibilityLabel="学科水平雷达图，刻度0至100"
+          accessibilityLabel={`学科水平雷达图，刻度${min}至${max}`}
         >
-          {[0, 20, 40, 60, 80, 100].map((value) => (
+          {ticks.map((value) => (
             <Polygon
               key={value}
               points={data.axes.map((_, index) => coordinates(index, value)).join(' ')}
@@ -44,9 +48,21 @@ export function RadarChart({ data }: { data: RadarReport }) {
               strokeWidth={1}
             />
           ))}
+          {data.scale?.reference !== undefined && (
+            <Polygon
+              points={data.axes
+                .map((_, index) => coordinates(index, data.scale!.reference!))
+                .join(' ')}
+              fill="none"
+              stroke={theme.colors.outline}
+              strokeWidth={2}
+              strokeDasharray="4 3"
+              accessibilityLabel={`中等水平参照${data.scale.reference}`}
+            />
+          )}
           <Circle cx={center} cy={center} r={1.5} fill={theme.colors.outline} />
           {data.axes.map((label, index) => {
-            const edge = point(index, 100);
+            const edge = point(index, max);
             return (
               <Line
                 key={`axis-${index}`}
@@ -101,7 +117,11 @@ export function RadarChart({ data }: { data: RadarReport }) {
                         cy={position.y}
                         r={3}
                         fill={color}
-                        accessibilityLabel={`${data.axes[index]} ${series.label}${value} / 100`}
+                        accessibilityLabel={
+                          data.scale
+                            ? `${data.axes[index]} ${series.label}${value}`
+                            : `${data.axes[index]} ${series.label}${value} / 100`
+                        }
                       />
                     </G>
                   );
@@ -110,7 +130,7 @@ export function RadarChart({ data }: { data: RadarReport }) {
             );
           })}
           {data.axes.map((label, index) => {
-            const caption = point(index, 126);
+            const caption = point(index, max + (max - min) * 0.26);
             return (
               <SvgText
                 key={`label-${index}`}

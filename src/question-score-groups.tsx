@@ -26,25 +26,11 @@ function QuestionRow({
     question.myAnswer !== undefined &&
     question.answer !== undefined &&
     question.myAnswer === question.answer;
-  const answers =
+  const answerText =
     question.kind === 'objective' &&
-    (question.myAnswer !== undefined || question.answer !== undefined) ? (
-      <Text
-        variant="bodySmall"
-        style={{
-          color: wrong
-            ? theme.colors.error
-            : correct
-              ? theme.dark
-                ? '#81C784'
-                : '#2E7D32'
-              : theme.colors.onSurface,
-        }}
-      >
-        {question.myAnswer !== undefined ? `我的答案 ${question.myAnswer}` : '未作答'}
-        {question.answer !== undefined ? ` · 正确答案 ${question.answer}` : ''}
-      </Text>
-    ) : null;
+    (question.myAnswer !== undefined || question.answer !== undefined)
+      ? `${question.myAnswer !== undefined ? `我的答案 ${question.myAnswer}` : '未作答'}${question.answer !== undefined ? ` · 正确答案 ${question.answer}` : ''}`
+      : undefined;
   const context = question.providerContext;
   const details = [
     ['实测难度', context?.difference],
@@ -58,13 +44,25 @@ function QuestionRow({
         <Text style={{ flex: 1 }}>{question.label}</Text>
         {result ? <Text>{result}</Text> : null}
       </View>
-      {answers}
-      {context?.knowledgePoint && <Text variant="bodySmall">知识点：{context.knowledgePoint}</Text>}
-      {details.length > 0 && (
-        <Text variant="bodySmall">
-          {details.map(([label, value]) => `${label} ${value}`).join(' · ')}
+      {(answerText || details.length > 0) && (
+        <Text
+          variant="bodySmall"
+          style={{
+            color: wrong
+              ? theme.colors.error
+              : correct
+                ? theme.dark
+                  ? '#81C784'
+                  : '#2E7D32'
+                : theme.colors.onSurface,
+          }}
+        >
+          {[answerText, details.map(([label, value]) => `${label} ${value}`).join(' · ')]
+            .filter(Boolean)
+            .join(' · ')}
         </Text>
       )}
+      {context?.knowledgePoint && <Text variant="bodySmall">知识点：{context.knowledgePoint}</Text>}
       {onViewImage && (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
           {context?.answerImageAvailable === 'true' && (

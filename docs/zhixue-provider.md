@@ -12,6 +12,7 @@
 相关实现与边界：
 
 - [附加报告与排名预估](zhixue-report-sections.md)
+- [新版报告与旧版兼容](zhixue-report-v25.md)
 - [逐题多区域及合并阅卷作答预览](zhixue-question-regions.md)
 - [统一 Provider 规范](provider-spec.md)
 

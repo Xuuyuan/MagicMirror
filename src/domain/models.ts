@@ -144,6 +144,7 @@ export interface SubjectAnalysisItem {
 }
 /** Provider 已解释字段含义；UI 只负责展示，不识别平台字段。 */
 export interface RadarReport {
+  scale?: { min: number; max: number; reference?: number };
   axes: string[];
   series: { label: string; values: (number | null)[] }[];
 }

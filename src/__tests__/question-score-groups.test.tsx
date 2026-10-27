@@ -3,6 +3,7 @@ import { QuestionScoreGroups } from '../question-score-groups';
 import type { QuestionScore, QuestionScoreSummary } from '../domain/models';
 import { flattenQuestions, isWrongQuestion } from '../services/subjects';
 import { zhixueQuestionAnswers, zhixueQuestions } from '../providers/zhixue-checksheet';
+import { v25Questions } from '../providers/zhixue-v25';
 
 const { renderToStaticMarkup } = jest.requireActual<{
   renderToStaticMarkup: (element: ReactElement) => string;
@@ -25,6 +26,19 @@ const questions: QuestionScore[] = [
   { id: 'q1', label: '客观小题', kind: 'objective', score: 4, maxScore: 4 },
   { id: 'q2', label: '主观小题', kind: 'subjective', score: 0, maxScore: 6 },
 ];
+it('renders school averages from modern Zhixue answer data, including a genuine zero', () => {
+  const parsed = v25Questions({
+    answerInfoDTOList: [
+      { topicNumber: 1, dispTitle: '虚构小题1', score: 0, standardScore: 4, gradeAvgScore: 0 },
+      { topicNumber: 2, dispTitle: '虚构小题2', gradeAvgScore: 2.345 },
+      { topicNumber: 3, dispTitle: '虚构小题3' },
+    ],
+  });
+  const html = renderToStaticMarkup(<QuestionScoreGroups questions={parsed} />);
+  expect(html).toContain('校均 0');
+  expect(html).toContain('校均 2.35');
+  expect(html.match(/校均/g)).toHaveLength(2);
+});
 it('keeps both whole-subject summaries when wrong-only removes a group or all questions', () => {
   const filtered = renderToStaticMarkup(
     <QuestionScoreGroups questions={questions.filter(isWrongQuestion)} summaries={summaries} />,
