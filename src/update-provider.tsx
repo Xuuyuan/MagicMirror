@@ -133,7 +133,6 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
         const state = await loadState();
         if (shouldPromptForRelease(result.release.version, state.ignoredVersion)) {
           setCurrentVersion(result.currentVersion);
-          setCurrentRelease(result.currentRelease);
           setRelease(result.release);
           setVisible(true);
         }
