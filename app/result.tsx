@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useLocalSearchParams, router } from 'expo-router';
-import { IconButton, List, Text, useTheme } from 'react-native-paper';
+import { Button, IconButton, List, Menu, Text, useTheme } from 'react-native-paper';
 import { Pressable, View } from 'react-native';
+import { useState } from 'react';
 import type { DefeatRate, Ranking, SubjectScore, SubjectStatistic } from '@/src/domain/models';
 import { examResultQueryOptions } from '@/src/services/queries';
 import { examDisplayName } from '@/src/services/exam-display';
@@ -42,6 +43,7 @@ function RankingGrid({
             >
               <Text variant="labelMedium">
                 {item.scope === 'class' ? '班级' : item.scope === 'grade' ? '学校' : '联考'}
+                {item.estimate ? '（预估）' : ''}
               </Text>
               <View
                 style={{
@@ -276,7 +278,9 @@ export default function Result() {
   const showAbsent = useAppStore((state) => state.showAbsentSubjects);
   const dismissedNotices = useAppStore((state) => state.dismissedNotices);
   const dismissNotice = useAppStore((state) => state.dismissNotice);
-  const query = useQuery(examResultQueryOptions(accountId, revision, examId));
+  const [reportId, setReportId] = useState<string>();
+  const [reportMenuVisible, setReportMenuVisible] = useState(false);
+  const query = useQuery(examResultQueryOptions(accountId, revision, examId, reportId));
   if (query.isPending)
     return (
       <Screen>
@@ -295,6 +299,8 @@ export default function Result() {
     );
   const result = query.data;
   const displayName = examDisplayName(result, examName) ?? '考试详情';
+  const selectedReport =
+    result.reports?.find((item) => item.id === reportId) ?? result.reports?.[0];
   const noticeKey = result.notice ? `${result.examId}:${result.notice.id}` : undefined;
   const notice =
     result.notice && noticeKey && !dismissedNotices.includes(noticeKey) ? result.notice : undefined;
@@ -321,6 +327,38 @@ export default function Result() {
           </Card>
         ) : null}
         <Card>
+          {result.reports && result.reports.length > 1 ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text variant="labelLarge">报告</Text>
+              <Menu
+                visible={reportMenuVisible}
+                onDismiss={() => setReportMenuVisible(false)}
+                anchor={
+                  <Button
+                    mode="outlined"
+                    compact
+                    icon="chevron-down"
+                    contentStyle={{ flexDirection: 'row-reverse' }}
+                    onPress={() => setReportMenuVisible(true)}
+                  >
+                    {selectedReport?.name ?? '选择报告'}
+                  </Button>
+                }
+              >
+                {result.reports.map((report) => (
+                  <Menu.Item
+                    key={report.id}
+                    title={report.name}
+                    leadingIcon={report.id === selectedReport?.id ? 'check' : undefined}
+                    onPress={() => {
+                      setReportMenuVisible(false);
+                      if (report.id !== selectedReport?.id) setReportId(report.id);
+                    }}
+                  />
+                ))}
+              </Menu>
+            </View>
+          ) : null}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Text variant="labelLarge">总分</Text>
             <GradeBadge
@@ -393,6 +431,7 @@ export default function Result() {
                           accountId,
                           examId,
                           examName: displayName,
+                          ...(selectedReport ? { reportId: selectedReport.id } : {}),
                           subjectId: subject.id ?? subject.subject,
                           subject: subject.subject,
                         },

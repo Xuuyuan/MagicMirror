@@ -32,7 +32,8 @@ function Group({ group }: { group: DistributionGroup }) {
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text variant="titleSmall">
-          {group.title} · {available.length}题
+          {group.title}
+          {group.unitLabel === '' ? '' : ` · ${available.length}${group.unitLabel ?? '题'}`}
         </Text>
         <IconButton
           style={{ margin: 0 }}
@@ -62,7 +63,7 @@ function Group({ group }: { group: DistributionGroup }) {
                   {optionColumns(question.bins).map((bin, binIndex) => (
                     <View
                       key={`${bin.label}-${binIndex}`}
-                      accessibilityLabel={`${question.label} ${bin.label} ${bin.value}`}
+                      accessibilityLabel={`${question.label} ${bin.label} ${bin.value}${bin.highlight ? '，本人所在分数段' : ''}`}
                       style={{ width: '20%', alignItems: 'center', paddingHorizontal: 2, gap: 2 }}
                     >
                       <Text variant="labelSmall">{bin.label}</Text>
@@ -77,10 +78,21 @@ function Group({ group }: { group: DistributionGroup }) {
                   {question.bins.map((bin, binIndex) => (
                     <View
                       key={`${bin.label}-${binIndex}`}
-                      accessibilityLabel={`${question.label} ${bin.label} ${bin.value}`}
-                      style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}
+                      accessibilityLabel={`${question.label} ${bin.label} ${bin.value}${bin.highlight ? '，本人所在分数段' : ''}`}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                      }}
                     >
-                      <Text variant="labelSmall" style={{ width: '30%' }}>
+                      <Text
+                        variant="labelSmall"
+                        style={{
+                          width: '30%',
+                          color: bin.highlight ? theme.colors.primary : theme.colors.onSurface,
+                          fontWeight: bin.highlight ? '700' : undefined,
+                        }}
+                      >
                         {bin.label}
                       </Text>
                       <View
@@ -97,14 +109,16 @@ function Group({ group }: { group: DistributionGroup }) {
                               width: `${bin.percent}%`,
                               height: 8,
                               borderRadius: 4,
-                              backgroundColor: theme.colors.primary,
+                              backgroundColor: bin.highlight
+                                ? theme.colors.primary
+                                : theme.colors.secondary,
                             }}
                           />
                         )}
                       </View>
                       <Text
                         variant="bodySmall"
-                        style={{ width: 64, textAlign: 'right' }}
+                        style={{ width: 64, textAlign: 'right', color: theme.colors.onSurface }}
                         numberOfLines={1}
                         adjustsFontSizeToFit
                       >

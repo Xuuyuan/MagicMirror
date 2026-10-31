@@ -25,6 +25,8 @@ export interface ScoreProviderMetadata {
 }
 export interface ProviderRequestOptions {
   signal?: AbortSignal;
+  /** 平台报告选择器中的报告 ID；缺省使用官方第一条报告。 */
+  reportId?: string;
 }
 export interface PasswordLoginMethod {
   id: string;

@@ -31,6 +31,10 @@ export interface ExamSummary {
   hasResult?: boolean;
   availability?: 'unavailable';
 }
+export interface ExamReport {
+  id: string;
+  name: string;
+}
 export interface UnclaimedExam {
   id: string;
   name: string;
@@ -72,6 +76,8 @@ export interface Ranking {
   /** 区间排名的上界（如官方下发「1~20」时 rank=1、rankMax=20）；缺省表示精确名次。 */ rankMax?: number;
   label?: string;
   scope?: 'class' | 'grade' | 'group';
+  /** 由分数段人数推算的区间名次（非官方精确名次），界面加“（预估）”。 */
+  estimate?: boolean;
 }
 export interface DefeatRate {
   scope: 'class' | 'grade';
@@ -101,6 +107,7 @@ export interface ExamResult {
   ranking?: Ranking;
   rankings?: Ranking[];
   publishedAt?: string;
+  reports?: ExamReport[];
   reportSections?: ReportSection[];
 }
 /** 原图上的归一化区域；sourceAspectRatio 用于拒绝方向或模板不匹配的图片。 */
@@ -170,7 +177,17 @@ export interface DistributionGroup {
   id: string;
   title: string;
   layout: 'options' | 'bars';
-  questions: { label: string; bins: { label: string; value: string; percent?: number }[] }[];
+  /** 标题里“N 题”的单位；设为空字符串时不显示计数（用于分数分布等非题目维度）。 */
+  unitLabel?: string;
+  questions: {
+    label: string;
+    bins: {
+      label: string;
+      value: string;
+      percent?: number;
+      highlight?: boolean;
+    }[];
+  }[];
 }
 export interface QuestionScore {
   id: string;
@@ -194,6 +211,8 @@ export interface SubjectDetail {
   subjectId: string;
   subject: string;
   score?: number;
+  /** 科目原始卷面分；平台明确提供或可由完整逐题得分合计时设置。 */
+  originalScore?: number;
   maxScore?: number;
   grade?: string;
   defeatRates?: DefeatRate[];

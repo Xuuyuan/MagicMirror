@@ -6,6 +6,7 @@ import { bfzksProvider } from './bfzks';
 import { zhuxuebangProvider } from './zhuxuebang';
 import { haitunyuejuanProvider } from './haitunyuejuan';
 import { zhixueProvider } from './zhixue';
+import { xiaolixuebanProvider } from './xiaolixueban';
 const providers = new Map<string, ScoreProvider>([
   [haofenshuParentProvider.metadata.id, haofenshuParentProvider],
   [haofenshuStudentProvider.metadata.id, haofenshuStudentProvider],
@@ -15,6 +16,7 @@ const providers = new Map<string, ScoreProvider>([
   [zhuxuebangProvider.metadata.id, zhuxuebangProvider],
   [haitunyuejuanProvider.metadata.id, haitunyuejuanProvider],
   [zhixueProvider.metadata.id, zhixueProvider],
+  [xiaolixuebanProvider.metadata.id, xiaolixuebanProvider],
 ]);
 export const providerRegistry = {
   get(id: string) {
