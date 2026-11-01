@@ -1,5 +1,5 @@
 import { createXiaolixuebanProvider } from '@/src/providers/xiaolixueban';
-import type { AuthSession } from '@/src/domain/models';
+import type { AuthSession, ExamResult } from '@/src/domain/models';
 import { providerRegistry } from '@/src/providers/registry';
 
 // 全部为虚构数据（结构与真实响应一致），不含任何真实账号、学生或成绩。
@@ -199,6 +199,40 @@ const scoreRateBody = {
     scoreRate: [{ courseId: 2, averageRate: '0.63065359' }],
   },
 };
+const threeSubjectCourseInfoBody = {
+  status: 0,
+  data: [
+    { courseId: 2, courseName: '语文', paperId: 'P2' },
+    { courseId: 5, courseName: '物理', paperId: 'P5' },
+    { courseId: 6, courseName: '化学', paperId: 'P6' },
+  ],
+};
+const threeSubjectRankInfoBody = {
+  status: 0,
+  data: {
+    ...rankInfoBody.data,
+    scoreRanking: [
+      ...rankInfoBody.data.scoreRanking,
+      { courseId: 5, courseName: '物理', totalScore: 80, fullMark: '100' },
+      { courseId: 6, courseName: '化学', totalScore: 90, fullMark: '100' },
+    ],
+  },
+};
+const threeSubjectScoreRateBody = {
+  status: 0,
+  data: {
+    studentScoreRate: [
+      { courseId: 2, scoreRate: '0.70000000' },
+      { courseId: 5, scoreRate: '0.80000000' },
+      { courseId: 6, scoreRate: '0.90000000' },
+    ],
+    scoreRate: [
+      { courseId: 2, averageRate: '0.63065359' },
+      { courseId: 5, averageRate: '0.71000000' },
+      { courseId: 6, averageRate: '0.84000000' },
+    ],
+  },
+};
 
 const paperQuestionRoster = {
   status: 0,
@@ -269,6 +303,20 @@ const loginRoutes = (extra: Route[] = []): Route[] => [
   { match: '/ssoLogin/getTicket', body: ticketBody },
   { match: '/api/base/data/system/auth/sso', body: ssoBody },
   { match: '/api/base/data/account/role', body: roleBody },
+];
+
+/** getExamResult 需要的报告端点；考试列表由各用例单独提供，便于断言请求次数。 */
+const examReportRoutes = (): Route[] => [
+  { match: '/weChat/all/schoolExamStat', body: statViewsBody },
+  { match: '/weChat/info', body: examInfoBody },
+  { match: '/weChat/courseInfo', body: courseInfoBody },
+  { match: '/api/exam/display/student/get', body: displayBody },
+  { match: '/api/exam/display/weixinDisplay', body: weixinBody },
+  { match: '/weChat/scoreRankInfo', body: rankInfoBody },
+  { match: '/api/analysis/view/monitor/exam/stat/baseIndex', body: baseIndexBody },
+  { match: '/weChat/scoreLevel', body: levelBody },
+  { match: '/weChat/beatRate', body: beatBody },
+  { match: '/api/analysis/data/monitor/exam/student/scoreRate', body: scoreRateBody },
 ];
 
 const freshSession = (): AuthSession => ({
@@ -363,7 +411,7 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
   });
 
   it('学生列表标记当前学生，切换学生后重建报告会话', async () => {
-    const { provider } = setup(loginRoutes());
+    const { provider, transport } = setup(loginRoutes());
     const session = freshSession();
     const profiles = await provider.getProfiles!(session);
     expect(profiles.map((profile) => profile.id)).toEqual([studentUserID, '2002']);
@@ -374,6 +422,11 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
     expect(switched.providerContext?.studentUserID).toBe('2002');
     expect(switched.providerContext?.studentName).toBe('测试学生二');
     expect(switched.accessToken).toBe('report-token-fixture');
+    expect(
+      (transport.mock.calls as unknown as [string, RequestInit][]).filter((call) =>
+        call[0].includes('/nicezhuanye/parent/getChilder'),
+      ),
+    ).toHaveLength(2);
   });
 
   it('考试列表：分页参数、日期与考试性质', async () => {
@@ -402,6 +455,94 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
     expect(new URL(second[0]).searchParams.get('pageNo')).toBe('2');
   });
 
+  it('考试列表下拉刷新会重新请求，并让成绩定位看到刷新后的数据', async () => {
+    const listRoute: Route = { match: '/api/exam/plan/student/all', body: examListBody };
+    const { provider, transport } = setup([...loginRoutes(), listRoute]);
+    const session = freshSession();
+    expect((await provider.getExamList(session)).map((exam) => exam.id)).toEqual(['111', '112']);
+
+    // 平台在两次刷新之间发布了新考试；同一会话也必须重新请求，不能返回旧缓存。
+    listRoute.body = {
+      ...examListBody,
+      data: {
+        ...examListBody.data,
+        exam: [
+          {
+            examId: 113,
+            examName: '示例月考三',
+            startDate,
+            stat: { statId: 0, resultStatus: 0, scoreChange: false },
+          },
+          ...examListBody.data.exam,
+        ],
+      },
+    };
+    expect((await provider.getExamList(session)).map((exam) => exam.id)).toEqual([
+      '113',
+      '111',
+      '112',
+    ]);
+
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.filter((call) => call[0].includes('/api/exam/plan/student/all'))).toHaveLength(2);
+  });
+
+  it('getExamResult 复用本会话考试列表，切换学生后按新学生重新取列表', async () => {
+    const listRoute: Route = { match: '/api/exam/plan/student/all', body: examListBody };
+    const { provider, transport } = setup([...loginRoutes(), listRoute, ...examReportRoutes()]);
+    const listCalls = () =>
+      (transport.mock.calls as unknown as [string, RequestInit][]).filter((call) =>
+        call[0].includes('/api/exam/plan/student/all'),
+      );
+
+    const session = freshSession();
+    await provider.getExamList(session);
+    const first = await provider.getExamResult(session, '111');
+    expect(first.originalTotalScore).toBe(404.5);
+    // 打开成绩不再重复请求考试列表，复用列表页已经取到的行。
+    expect(listCalls()).toHaveLength(1);
+
+    // 切换学生：新会话对象必须重新取列表，且不能读到上一个学生的缓存。
+    listRoute.body = {
+      ...examListBody,
+      data: {
+        ...examListBody.data,
+        exam: examListBody.data.exam.map((exam) =>
+          exam.examId === 111 ? { ...exam, stat: { ...exam.stat, originalScore: 500.5 } } : exam,
+        ),
+      },
+    };
+    const switchedSession: AuthSession = {
+      ...session,
+      providerContext: { ...session.providerContext, studentId: '5002', studentUserID: '2002' },
+    };
+    await provider.getExamList(switchedSession);
+    expect(listCalls()).toHaveLength(2);
+    const switched = await provider.getExamResult(switchedSession, '111');
+    expect(switched.originalTotalScore).toBe(500.5);
+    expect(listCalls()).toHaveLength(2);
+
+    // 旧会话仍使用自己的列表缓存，没有被切换学生的刷新覆盖。
+    const again = await provider.getExamResult(session, '111');
+    expect(again.originalTotalScore).toBe(404.5);
+    expect(listCalls()).toHaveLength(2);
+  });
+
+  it('未打开考试列表时直接查看成绩：列表只取一次，后续成绩复用', async () => {
+    const { provider, transport } = setup([
+      ...loginRoutes(),
+      { match: '/api/exam/plan/student/all', body: examListBody },
+      ...examReportRoutes(),
+    ]);
+    const session = freshSession();
+    await provider.getExamResult(session, '111');
+    await provider.getExamResult(session, '111');
+    const listCalls = (transport.mock.calls as unknown as [string, RequestInit][]).filter((call) =>
+      call[0].includes('/api/exam/plan/student/all'),
+    );
+    expect(listCalls).toHaveLength(1);
+  });
+
   it('报告令牌失效（业务 10051）映射为会话过期', async () => {
     const { provider } = setup([
       ...loginRoutes(),
@@ -410,6 +551,21 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
     await expect(provider.getExamList(freshSession())).rejects.toMatchObject({
       code: 'SESSION_EXPIRED',
     });
+  });
+
+  it('未出分考试：报告视图为空时立即拒绝，不继续请求总览数据', async () => {
+    const { provider, transport } = setup([
+      ...loginRoutes(),
+      { match: '/weChat/all/schoolExamStat', body: { status: 0, data: [] } },
+    ]);
+    await expect(provider.getExamResult(freshSession(), '112')).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+    const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.filter((call) => call[0].includes('/weChat/all/schoolExamStat'))).toHaveLength(1);
+    expect(calls.some((call) => call[0].includes('/weChat/info'))).toBe(false);
+    expect(calls.some((call) => call[0].includes('/weChat/courseInfo'))).toBe(false);
+    expect(calls.some((call) => call[0].includes('/weChat/scoreRankInfo'))).toBe(false);
   });
 
   it('区域考试：总分、单科、班级/年级排名、等级与统计', async () => {
@@ -427,10 +583,13 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
       { match: '/weChat/beatRate', body: beatBody },
       { match: '/api/analysis/data/monitor/exam/student/scoreRate', body: scoreRateBody },
     ]);
-    const result = await provider.getExamResult(freshSession(), '111');
+    const session = freshSession();
+    await provider.getExamList(session);
+    const result = await provider.getExamResult(session, '111');
 
     // 平台要求 statId；缺失时联考均分会静默丢失，只剩人数。
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
+    expect(calls.filter((call) => call[0].includes('/api/exam/plan/student/all'))).toHaveLength(1);
     const baseIndex = calls.find((call) => call[0].includes('/stat/baseIndex'))!;
     expect(new URL(baseIndex[0]).searchParams.get('statId')).toBe('10');
 
@@ -464,16 +623,38 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
       score: 105,
       maxScore: 150,
     });
-    // 学科强弱得分率以雷达图展示。
+    // 只有 1 个有效科目时不展示学科强弱得分率。
+    expect(result.reportSections).toBeUndefined();
+  });
+
+  it('学科强弱得分率至少有三科时展示雷达图', async () => {
+    const { provider } = setup([
+      ...loginRoutes(),
+      { match: '/weChat/all/schoolExamStat', body: statViewsBody },
+      { match: '/weChat/info', body: examInfoBody },
+      { match: '/weChat/courseInfo', body: threeSubjectCourseInfoBody },
+      { match: '/api/exam/display/student/get', body: displayBody },
+      { match: '/api/exam/display/weixinDisplay', body: weixinBody },
+      { match: '/weChat/scoreRankInfo', body: threeSubjectRankInfoBody },
+      { match: '/api/analysis/view/monitor/exam/stat/baseIndex', body: baseIndexBody },
+      { match: '/weChat/scoreLevel', body: levelBody },
+      { match: '/weChat/beatRate', body: beatBody },
+      {
+        match: '/api/analysis/data/monitor/exam/student/scoreRate',
+        body: threeSubjectScoreRateBody,
+      },
+    ]);
+    const result = await provider.getExamResult(freshSession(), '111');
+
     expect(result.reportSections?.map((section) => section.id)).toEqual([
       'xiaolixueban-score-rate',
     ]);
     expect(result.reportSections?.[0].radar).toEqual({
       scale: { min: 0, max: 100 },
-      axes: ['语文'],
+      axes: ['语文', '物理', '化学'],
       series: [
-        { label: '本人', values: [70] },
-        { label: '学校平均', values: [63.1] },
+        { label: '本人', values: [70, 80, 90] },
+        { label: '学校平均', values: [63.1, 71, 84] },
       ],
     });
   });
@@ -601,7 +782,7 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
   });
 
   it('校内科考试：分数取自该科报告视图（statName → courseId）', async () => {
-    const { provider } = setup([
+    const { provider, transport } = setup([
       ...loginRoutes(),
       {
         // 非赋分考试：列表 stat 只有发布状态，没有赋分/原始分字段。
@@ -627,7 +808,8 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
         body: {
           status: 0,
           data: [
-            { statId: 0, statName: '原始报告', statStatus: 1 },
+            // 主报告同时也是语文科目报告；后续科目补全会再次尝试同一请求，应用层应复用结果。
+            { statId: 0, statName: '语文(全体)', statStatus: 1 },
             { statId: 2, statName: '物理(全体)', statStatus: 1 },
           ],
         },
@@ -716,6 +898,10 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
         providerContext: { statId: '2', courseId: '5', paperId: 'P5' },
       },
     ]);
+    const paperCalls = (transport.mock.calls as unknown as [string, RequestInit][]).filter((call) =>
+      call[0].includes('/weChat/paper/question'),
+    );
+    expect(paperCalls).toHaveLength(2);
     const distribution = result.reportSections?.find(
       (section) => section.id === 'xiaolixueban-score-distribution',
     );
@@ -890,6 +1076,7 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
     const calls = transport.mock.calls as unknown as [string, RequestInit][];
     const call = calls.find((item) => item[0].includes('question/error/analysis'))!;
     expect(new URL(call[0]).searchParams.get('paperId')).toBe('P5');
+    expect(calls.filter((item) => item[0].includes('/weChat/courseInfo'))).toHaveLength(1);
 
     expect(detail.score).toBe(5);
     expect(detail.maxScore).toBe(10);
@@ -973,8 +1160,24 @@ describe('小力学伴 Provider（无网络，虚构数据）', () => {
         },
       },
     ];
-    const { provider } = setup(routes);
-    const sheets = await provider.getAnswerSheets!(freshSession(), '111', '2:5');
+    const { provider, transport } = setup(routes);
+    const cachedResult: ExamResult = {
+      examId: '111',
+      examName: '示例校考',
+      subjects: [
+        {
+          id: '2:5',
+          subject: '物理',
+          providerContext: { statId: '2', courseId: '5', paperId: 'P5' },
+        },
+      ],
+    };
+    const sheets = await provider.getAnswerSheets!(freshSession(), '111', '2:5', cachedResult);
+    expect(
+      (transport.mock.calls as unknown as [string, RequestInit][]).filter((call) =>
+        call[0].includes('/weChat/courseInfo'),
+      ),
+    ).toHaveLength(0);
     expect(sheets.map((sheet) => sheet.url)).toEqual([
       'https://cdn.dongni100.com/upload/card-a.jpg',
       'https://cdn.dongni100.com/upload/card-b.jpg',
