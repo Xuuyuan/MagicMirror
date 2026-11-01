@@ -348,10 +348,6 @@ function numberFromValue(value: string | number | undefined): number | undefined
   return parsed === undefined ? undefined : roundScore(parsed);
 }
 
-function numberFromString(value: string | undefined): number | undefined {
-  return numberFromValue(value);
-}
-
 /** 平台比率是 0–1 小数；UI 使用 0–100，保留一位小数。 */
 function percentFromRate(value: string | undefined): number | undefined {
   const parsed = value === undefined ? undefined : numericScore(value.trim());
@@ -364,7 +360,7 @@ function sumQuestionAverage(
   key: 'classAverageScore' | 'schoolAverageScore',
 ): number | undefined {
   if (!questions?.length) return undefined;
-  const values = questions.map((question) => numberFromString(question[key]));
+  const values = questions.map((question) => numberFromValue(question[key]));
   if (!values.every((value): value is number => value !== undefined)) return undefined;
   return roundScore(values.reduce((total, value) => total + value, 0));
 }
@@ -584,6 +580,23 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
   const pollDelay = options.pollIntervalMs ?? pollIntervalMs;
   const transport: FetchTransport = options.transport ?? ((...args) => fetch(...args));
   const revoked = new WeakSet<AuthSession>();
+  // 考试列表页缓存：只供“打开某场成绩时定位该场考试的列表级字段”（赋分、原始分、满分）复用，
+  // 避免同一会话里每打开一场考试都重拉一遍考试列表。
+  // 键是会话对象本身：切换学生/重新登录都会得到新会话对象，缓存天然隔离。
+  // getExamList 每次仍照常请求并覆盖缓存，保证下拉刷新能看到新发布的考试。
+  const examRowsBySession = new WeakMap<
+    AuthSession,
+    Map<number, z.infer<typeof examStatSchema>[]>
+  >();
+
+  function examRowsOf(session: AuthSession): Map<number, z.infer<typeof examStatSchema>[]> {
+    let pages = examRowsBySession.get(session);
+    if (!pages) {
+      pages = new Map();
+      examRowsBySession.set(session, pages);
+    }
+    return pages;
+  }
 
   function assertSession(session: AuthSession): void {
     if (
@@ -992,18 +1005,24 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     options?: ProviderRequestOptions,
   ): Promise<z.infer<typeof examStatSchema>['stat']> {
     const context = session.providerContext ?? {};
+    const pages = examRowsOf(session);
     for (let pageNo = 1; pageNo <= 5; pageNo += 1) {
-      const data = await reportRequest(
-        session,
-        '/api/exam/plan/student/all',
-        examListSchema,
-        { schoolId: context.schoolId, pageNo, pageSize: examPageSize, examType: examTypes },
-        options,
-        '考试列表',
-      );
-      const row = data.exam.find((item) => item.examId === examId);
+      let rows = pages.get(pageNo);
+      if (!rows) {
+        const data = await reportRequest(
+          session,
+          '/api/exam/plan/student/all',
+          examListSchema,
+          { schoolId: context.schoolId, pageNo, pageSize: examPageSize, examType: examTypes },
+          options,
+          '考试列表',
+        );
+        rows = data.exam;
+        pages.set(pageNo, rows);
+      }
+      const row = rows.find((item) => item.examId === examId);
       if (row) return row.stat;
-      if (data.exam.length < examPageSize) return undefined;
+      if (rows.length < examPageSize) return undefined;
     }
     return undefined;
   }
@@ -1060,9 +1079,16 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     subjectId: string,
     cached?: ExamResult,
   ): { statId: number; courseId: number; paperId?: string } {
-    const match = /^(\d{1,9}):(\d{1,9})$/.exec(subjectId);
-    if (match) return { statId: Number(match[1]), courseId: Number(match[2]) };
     const cachedSubject = cached?.subjects.find((item) => item.id === subjectId);
+    const match = /^(\d{1,9}):(\d{1,9})$/.exec(subjectId);
+    if (match)
+      return {
+        statId: Number(match[1]),
+        courseId: Number(match[2]),
+        ...(cachedSubject?.providerContext?.paperId
+          ? { paperId: cachedSubject.providerContext.paperId }
+          : {}),
+      };
     const statId = Number(cachedSubject?.providerContext?.statId);
     const courseId = Number(cachedSubject?.providerContext?.courseId);
     if (!Number.isFinite(statId) || !Number.isFinite(courseId))
@@ -1074,17 +1100,6 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
         ? { paperId: cachedSubject.providerContext.paperId }
         : {}),
     };
-  }
-
-  async function paperIdOf(
-    session: AuthSession,
-    examId: string,
-    statId: number,
-    courseId: number,
-    options?: ProviderRequestOptions,
-  ): Promise<string | undefined> {
-    const courses = await optional(coursesOf(session, examId, statId, options));
-    return courses?.find((course) => course.courseId === courseId)?.paperId;
   }
 
   /** 异步答题卡：起始任务 + 轮询；只接受本人学生信息对应的卡片集。 */
@@ -1154,6 +1169,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     metadata: {
       id: providerId,
       name: providerName,
+      remark: '好专业/懂你教育',
       description: '查询官方考试报告、单科成绩与答题卡（家长手机号登录）。',
       officialDomain: portalHost,
     },
@@ -1213,6 +1229,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       const offset = Math.max(0, page.offset ?? 0);
       const pageNo = Math.floor(offset / examPageSize) + 1;
       const fetchPage = async (index: number) => {
+        // 每个会话的列表页都真实请求一次并写回缓存：下拉刷新/重新进入列表应看到平台的新数据。
         const data = await reportRequest(
           session,
           '/api/exam/plan/student/all',
@@ -1226,6 +1243,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
           options,
           '考试列表',
         );
+        examRowsOf(session).set(index, data.exam);
         return data.exam;
       };
       const start = offset % examPageSize;
@@ -1351,57 +1369,70 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       const rows = rankInfo?.scoreRanking ?? [];
       const totalRow = rows.find((row) => row.courseId === undefined);
       const courseRows = rows.filter((row) => row.courseId !== undefined);
+      const ownStudentId = sessionStudentId(session);
+      const paperQuestionCache = new Map<
+        string,
+        Promise<z.infer<typeof paperQuestionSchema> | undefined>
+      >();
+      const paperQuestionOf = (
+        statId: number,
+        courseId: number,
+        paperId?: string,
+      ): Promise<z.infer<typeof paperQuestionSchema> | undefined> => {
+        const key = `${statId}:${courseId}:${paperId ?? ''}`;
+        const cached = paperQuestionCache.get(key);
+        if (cached) return cached;
+        const request = optional(
+          reportRequest(
+            session,
+            '/api/analysis/data/exam/student/weChat/paper/question',
+            paperQuestionSchema,
+            {
+              examId,
+              statId,
+              courseId,
+              ...(paperId ? { paperId } : {}),
+            },
+            options,
+            '单科成绩',
+          ),
+        );
+        paperQuestionCache.set(key, request);
+        return request;
+      };
 
       // 单科报告视图（如“物理(全体)”）不经 scoreRankInfo，需单独取本人本科总分。
-      const subjectStatScores: {
-        statId: number;
-        courseId: number;
-        course: z.infer<typeof courseInfoSchema>[number];
-        score?: number;
-        maxScore?: number;
-      }[] = [];
-      if (courses?.length) {
-        for (const stat of stats) {
-          const course = courseForStat(stat.statName, courses);
-          if (!course) continue;
-          if (courseRows.some((row) => row.courseId === course.courseId)) continue;
-          const paper = await optional(
-            reportRequest(
-              session,
-              '/api/analysis/data/exam/student/weChat/paper/question',
-              paperQuestionSchema,
-              {
-                examId,
-                statId: stat.statId,
-                courseId: course.courseId,
-                ...(course.paperId ? { paperId: course.paperId } : {}),
-              },
-              options,
-              '单科成绩',
-            ),
-          );
-          const own = paper?.student?.find((row) => row.studentId === sessionStudentId(session));
-          const maxScore = own?.questions?.reduce(
-            (total, question) => total + (question.scoreValue ?? 0),
-            0,
-          );
-          subjectStatScores.push({
-            statId: stat.statId,
-            courseId: course.courseId,
-            course,
-            score: own?.totalScore === undefined ? undefined : roundScore(own.totalScore),
-            maxScore: maxScore && maxScore > 0 ? maxScore : undefined,
-          });
-        }
-      }
+      const subjectStatScores = courses?.length
+        ? (
+            await Promise.all(
+              stats.map(async (stat) => {
+                const course = courseForStat(stat.statName, courses);
+                if (!course || courseRows.some((row) => row.courseId === course.courseId))
+                  return undefined;
+                const paper = await paperQuestionOf(stat.statId, course.courseId, course.paperId);
+                const own = paper?.student?.find((row) => row.studentId === ownStudentId);
+                const maxScore = own?.questions?.reduce(
+                  (total, question) => total + (question.scoreValue ?? 0),
+                  0,
+                );
+                return {
+                  statId: stat.statId,
+                  courseId: course.courseId,
+                  course,
+                  score: own?.totalScore === undefined ? undefined : roundScore(own.totalScore),
+                  maxScore: maxScore && maxScore > 0 ? maxScore : undefined,
+                };
+              }),
+            )
+          ).filter((item): item is NonNullable<typeof item> => item !== undefined)
+        : [];
 
-      const ownStudentId = sessionStudentId(session);
       const subjectById = new Map<number, SubjectScore>();
       for (const row of courseRows) {
         const course = courses?.find((item) => item.courseId === row.courseId);
         const subject = row.courseName ?? course?.courseName;
         if (row.courseId === undefined || !subject) continue;
-        const maxScore = numberFromString(row.fullMark);
+        const maxScore = numberFromValue(row.fullMark);
         subjectById.set(row.courseId, {
           id: `${primary.statId}:${row.courseId}`,
           subject,
@@ -1436,21 +1467,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       if (uncoveredCourses.length) {
         const fetched = await Promise.all(
           uncoveredCourses.map(async (course) => {
-            const paper = await optional(
-              reportRequest(
-                session,
-                '/api/analysis/data/exam/student/weChat/paper/question',
-                paperQuestionSchema,
-                {
-                  examId,
-                  statId: primary.statId,
-                  courseId: course.courseId,
-                  ...(course.paperId ? { paperId: course.paperId } : {}),
-                },
-                options,
-                '单科成绩',
-              ),
-            );
+            const paper = await paperQuestionOf(primary.statId, course.courseId, course.paperId);
             const own = paper?.student?.find((row) => row.studentId === ownStudentId);
             if (own) {
               const maxScore = own.questions?.reduce(
@@ -1583,8 +1600,8 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
           ? roundScore(subjects.reduce((sum, item) => sum + (item.maxScore ?? 0), 0))
           : undefined;
       let maxTotalScore =
-        numberFromString(totalRow?.fullMark) ??
-        numberFromString(listStat?.fullMark) ??
+        numberFromValue(totalRow?.fullMark) ??
+        numberFromValue(listStat?.fullMark) ??
         subjectMaxSum ??
         numberFromValue(schoolRow?.fullMark);
       let derivedTotal = false;
@@ -1633,10 +1650,10 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       const statistics: SubjectStatistic[] = [];
       if (totalRow) {
         // 卡片顺序：班级均分在前、学校均分在后。
-        const classAverage = numberFromString(totalRow.classAverageScore);
+        const classAverage = numberFromValue(totalRow.classAverageScore);
         if (classAverage !== undefined)
           statistics.push({ scope: '班级', averageScore: classAverage });
-        const gradeAverage = numberFromString(totalRow.schoolAverageScore);
+        const gradeAverage = numberFromValue(totalRow.schoolAverageScore);
         // 均分卡片只放均分：各口径人数已由排名卡片展示，避免重复。
         if (gradeAverage !== undefined)
           statistics.push({ scope: '年级', averageScore: gradeAverage });
@@ -1673,7 +1690,13 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
             ? (percentFromRate(averageRates.get(courseId)) ?? null)
             : null;
         });
-        if (axes.length && [...ownValues, ...averageValues].some((value) => value !== null))
+        // 雷达图至少需要 3 个有得分率的科目；课程列表本身不代表科目数据有效。
+        const validSubjectCount = subjects.reduce(
+          (count, _subject, index) =>
+            count + (ownValues[index] !== null || averageValues[index] !== null ? 1 : 0),
+          0,
+        );
+        if (validSubjectCount >= 3)
           sections.push({
             id: 'xiaolixueban-score-rate',
             title: '学科强弱得分率',
@@ -1730,9 +1753,9 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     async getSubjectDetail(session, examId, subjectId, cachedResult, options) {
       assertSession(session);
       const target = parseSubjectId(subjectId, cachedResult);
+      const courses = await optional(coursesOf(session, examId, target.statId, options));
       const paperId =
-        target.paperId ??
-        (await paperIdOf(session, examId, target.statId, target.courseId, options));
+        target.paperId ?? courses?.find((course) => course.courseId === target.courseId)?.paperId;
       const paper = await reportRequest(
         session,
         '/api/analysis/data/exam/student/weChat/paper/question',
@@ -1748,9 +1771,8 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       );
       // 该接口返回整班数据，只保留本人那一条，其余立即丢弃。
       const paperOwn = paper.student?.find((row) => row.studentId === sessionStudentId(session));
-      const [courses, analyses, sectionsData, classSectionsData, rankInfo, errors, baseIndex] =
+      const [analyses, sectionsData, classSectionsData, rankInfo, errors, baseIndex] =
         await Promise.all([
-          optional(coursesOf(session, examId, target.statId, options)),
           optional(
             reportRequest(
               session,
@@ -1944,7 +1966,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       // 卡片顺序：班级在前、学校在后；联考（区域考试）补充均分与排名。
       {
         const average =
-          numberFromString(rankRow?.classAverageScore) ??
+          numberFromValue(rankRow?.classAverageScore) ??
           sumQuestionAverage(analyses?.question, 'classAverageScore');
         if (average !== undefined || classRank) {
           statistics.push({
@@ -1961,7 +1983,7 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
       }
       {
         const average =
-          numberFromString(rankRow?.schoolAverageScore) ??
+          numberFromValue(rankRow?.schoolAverageScore) ??
           sumQuestionAverage(analyses?.question, 'schoolAverageScore');
         if (average !== undefined || gradeRank) {
           statistics.push({
@@ -2008,9 +2030,9 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
         0,
       );
       const maxScore =
-        numberFromString(ownSection?.fullMark) ??
+        numberFromValue(ownSection?.fullMark) ??
         (questionMaxSum && questionMaxSum > 0 ? questionMaxSum : undefined) ??
-        numberFromString(rankRow?.fullMark);
+        numberFromValue(rankRow?.fullMark);
       const originalScore =
         questions.length > 0 && questions.every((question) => question.score !== undefined)
           ? roundScore(questions.reduce((total, question) => total + (question.score ?? 0), 0))
@@ -2037,7 +2059,9 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     async getAnswerSheets(session, examId, subjectId, cachedResult, options) {
       assertSession(session);
       const target = parseSubjectId(subjectId, cachedResult);
-      const courses = await optional(coursesOf(session, examId, target.statId, options));
+      const courses = target.paperId
+        ? undefined
+        : await optional(coursesOf(session, examId, target.statId, options));
       const paperId =
         target.paperId ?? courses?.find((course) => course.courseId === target.courseId)?.paperId;
       if (!paperId) throw new ProviderError('NOT_FOUND', `${providerName}未找到本科试卷`);
@@ -2058,6 +2082,8 @@ export function createXiaolixuebanProvider(options: XiaolixuebanOptions = {}): S
     async logout(session) {
       if (session.providerId !== providerId) return;
       revoked.add(session);
+      // 立即释放该会话的列表页缓存，不等待 WeakMap 回收。
+      examRowsBySession.delete(session);
       try {
         await requestWithTimeout(
           transport,

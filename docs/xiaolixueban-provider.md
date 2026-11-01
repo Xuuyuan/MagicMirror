@@ -1,6 +1,6 @@
 # 小力学伴 Provider
 
-Provider ID 为 `xiaolixueban`，名称为“小力学伴”。设备直接访问官方门户 `https://school.nicezhuanye.com` 与报告服务 `https://m.nicezhuanye.com`（换票在 `https://nicezhuanye.dongni100.com`，答题卡图片在 `https://cdn.dongni100.com`）。
+Provider ID 为 `xiaolixueban`，名称为“小力学伴”，别名为“好专业/懂你教育”。设备直接访问官方门户 `https://school.nicezhuanye.com` 与报告服务 `https://m.nicezhuanye.com`（换票在 `https://nicezhuanye.dongni100.com`，答题卡图片在 `https://cdn.dongni100.com`）。
 
 登录方式只有**手机号 + 密码**，走官方登录页的「手机号登录」通道（`POST /loginserv/login/login`，`{parameter:{cellphone,pwd,saveCookie:true}}`）；不使用官方 WebView 登录，也不使用「账号密码登录」（那条链路带请求加密，与手机号通道不同）。密码经项目现有 SecureStore 账号层保存，失效时由账号层重新登录并重新换票。
 
@@ -32,7 +32,7 @@ Provider ID 为 `xiaolixueban`，名称为“小力学伴”。设备直接访�
 - **单科统计**：卡片顺序为班级均分/排名 → 学校均分/排名 → 联考均分/排名。班级/学校均分优先取 `scoreRankInfo` 单科行的 `classAverageScore`/`schoolAverageScore`，该行缺失时从 `result/question/analysis` 各题的同名字段汇总；联考均分取 `baseIndex` 区域汇总行里同一 `courseId` 的单科均分，联考排名取 `scoreRankInfo` 单科行的 `ranking`，人数取该行的 `examRankNumber`。所有内容以实际返回数据为准，不受显示开关过滤。
 - **单科报告下的其它科目**：`courseInfo` 会返回本场全部科目，但单科报告的 `paper/question` 可能只返回主导科目（例如“物理(全体)”只返回物理）。Provider 先沿用主导 `statId` 请求各科 `paper/question`，失败或没有本人记录时再按科目请求 `scoreRankInfo`，并保留 `courseInfo` 中的科目入口，避免政治等科目消失。无法取得分数时仍显示科目，但不伪造分数或满分。
 - **人数展示**：均分卡片只放均分，人数只在排名卡片展示；只有当所有排名都不含人数时，才在总分区以“考生人数”补齐。
-- **学科强弱得分率**：只有“本人”和“学校平均”两条。平台的 `scoreRate` 接口只返回本人各科得分率与各科平均得分率，后者是学校口径，没有班级、联考版本；班级只有分数均分（`scoreRankInfo.classAverageScore`），无法换算成单科得分率。
+- **学科强弱得分率**：有效科目至少 3 科时展示“本人”和“学校平均”两条。平台的 `scoreRate` 接口只返回本人各科得分率与各科平均得分率，后者是学校口径，没有班级、联考版本；班级只有分数均分（`scoreRankInfo.classAverageScore`），无法换算成单科得分率。
 - **逐题得分**：`result/question/analysis` 在部分考试（实测区域赋分考试）逐题 `finallyScore` 全为 0，真实得分在 `error/analysis` 的 `finallyScore`（其合计等于科目总分），客观题正确答案为 `correctAnswer`。Provider 以题号合并两接口：得分与正确答案取 `error/analysis`，题目类型与客观/主观标记取 `result/question/analysis`（该接口缺失时退化为仅用 `error/analysis`）。
 - **主观题汇总**：答题详情优先直接累加每道主观题的实际 `finallyScore`；只有逐题主观得分缺失时，才回退到“科目总分 − 客观题得分”，避免赋分考试混用口径。
 - **赋分与原始分**：考试列表 `stat` 同时给出原始分与赋分时，详情页总分使用平台赋分并显示官方原始总分。科目详情在逐题得分完整时，将各小题得分合计为科目原始分；只有原始分与平台返回总分不同时才显示“原始 X”，相同时隐藏重复标签。不能据此反推出整场考试原始总分。

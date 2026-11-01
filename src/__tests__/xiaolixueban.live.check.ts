@@ -9,8 +9,13 @@
 /**
  * 只执行**只读**查询：登录 → 学生信息 → 考试列表 → 一场成绩 → 一个科目 → 答题卡。
  * 不做任何写操作（不提交、不申诉、不购买、不改资料）。
+ *
+ * 额外验证两条请求链路：
+ * 1. 打开多场成绩时不再重复请求考试列表；
+ * 2. 切换学生后的成绩查询不会复用上一个学生的列表缓存。
  */
 import { createXiaolixuebanProvider } from '@/src/providers/xiaolixueban';
+import type { FetchTransport } from '@/src/services/http';
 
 const account = process.env.XIAOLIXUEBAN_ACCOUNT ?? '';
 const password = process.env.XIAOLIXUEBAN_PASSWORD ?? '';
@@ -19,9 +24,23 @@ jest.setTimeout(180000);
 
 const live = account && password ? it : it.skip;
 
+/** 记录请求地址，不记录响应内容；只用于断言考试列表请求次数。 */
+function countingTransport() {
+  const urls: string[] = [];
+  const transport: FetchTransport = (input, init) => {
+    urls.push(String(input));
+    return fetch(input, init);
+  };
+  return {
+    transport,
+    examListCalls: () => urls.filter((url) => url.includes('/api/exam/plan/student/all')).length,
+  };
+}
+
 describe('小力学伴 Provider 联网冒烟（只读）', () => {
   live('登录 → 学生信息 → 考试列表 → 一场成绩 → 科目明细 → 答题卡', async () => {
-    const provider = createXiaolixuebanProvider();
+    const { transport, examListCalls } = countingTransport();
+    const provider = createXiaolixuebanProvider({ transport });
     const session = await provider.authenticate(account, password);
     console.log('[live] 登录与上下文完成');
     expect(session.providerId).toBe('xiaolixueban');
@@ -39,11 +58,14 @@ describe('小力学伴 Provider 联网冒烟（只读）', () => {
 
     const list = await provider.getExamList(session);
     console.log('[live] 考试列表完成');
+    expect(examListCalls()).toBe(1);
     expect(list.length).toBeGreaterThan(0);
     for (const exam of list) {
       expect(exam.id).toMatch(/^\d+$/);
       if (exam.date !== undefined) expect(exam.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     }
+    const unpublished = list.filter((exam) => exam.hasResult !== true);
+    for (const exam of unpublished) expect(exam.hasResult).toBeUndefined();
 
     let checked:
       | {
@@ -68,14 +90,25 @@ describe('小力学伴 Provider 联网冒烟（只读）', () => {
       result: Awaited<ReturnType<typeof provider.getExamResult>>;
       examId: string;
     }[] = [];
-    for (const exam of list.slice(0, 6)) {
+    for (const exam of list.slice(0, 8)) {
       try {
         const result = await provider.getExamResult(session, exam.id);
         if (result.subjects.length) candidates.push({ result, examId: exam.id });
       } catch (error) {
         console.log('[live] 跳过一场考试', (error as Error).message);
       }
-      if (candidates.some((item) => item.result.isUnion === true)) break;
+      const hasUnion = candidates.some((item) => item.result.isUnion === true);
+      const hasNonUnion = candidates.some((item) => item.result.isUnion !== true);
+      if (hasUnion && hasNonUnion) break;
+    }
+    // 每场成绩都要定位列表里的赋分/原始分，但不应因此重复拉考试列表。
+    expect(examListCalls()).toBe(1);
+    for (const candidate of candidates) {
+      expect(candidate.result.subjects.length).toBeGreaterThan(0);
+      for (const ranking of candidate.result.rankings ?? []) {
+        if (candidate.result.isUnion && ranking.scope === 'group')
+          expect(ranking.label).toBe('联考排名');
+      }
     }
     const picked =
       candidates.find(
@@ -85,8 +118,16 @@ describe('小力学伴 Provider 联网冒烟（只读）', () => {
       candidates[0];
     // 只打印各候选考试的科目数，确认“未发布单科报告”的考试也能补全多科。
     console.log(
-      '[live] 候选科目数',
-      JSON.stringify(candidates.map((item) => item.result.subjects.length)),
+      '[live] 候选形状',
+      JSON.stringify(
+        candidates.map((item) => ({
+          union: item.result.isUnion === true,
+          subjects: item.result.subjects.length,
+          total: typeof item.result.totalScore === 'number',
+          originalTotal: typeof item.result.originalTotalScore === 'number',
+          rankings: item.result.rankings?.length ?? 0,
+        })),
+      ),
     );
     if (picked) {
       const { result, examId } = picked;
@@ -179,7 +220,48 @@ describe('小力学伴 Provider 联网冒烟（只读）', () => {
       console.log('[live] 补全科目详情题数', detail.questions?.length ?? 0);
     }
 
+    const nonUnionCandidate = candidates.find((item) => item.result.isUnion !== true);
+    if (nonUnionCandidate) {
+      const subject = nonUnionCandidate.result.subjects.find((item) => item.id !== undefined);
+      expect(subject).toBeDefined();
+      const detail = await provider.getSubjectDetail!(
+        session,
+        nonUnionCandidate.examId,
+        subject!.id!,
+        nonUnionCandidate.result,
+      );
+      expect(detail.subject).toBeTruthy();
+      expect(typeof detail.score === 'number' || (detail.questions?.length ?? 0) > 0).toBe(true);
+      console.log('[live] 非联考科目详情题数', detail.questions?.length ?? 0);
+    }
+
     // 只打印形状与计数，不打印姓名、学校、分数等真实数据。
-    console.log('[live] 通过', JSON.stringify({ exams: list.length, ...checked }));
+    console.log(
+      '[live] 通过',
+      JSON.stringify({ exams: list.length, unpublished: unpublished.length, ...checked }),
+    );
+
+    // 学生切换后的缓存隔离：新学生的列表必须重新请求，随后打开成绩不再重复请求列表。
+    if (profiles.length > 1) {
+      const other = profiles.find((profile) => !profile.selected) ?? profiles[1];
+      const switched = await provider.selectProfile!(session, other.id);
+      const beforeSwitch = examListCalls();
+      const switchedList = await provider.getExamList(switched);
+      expect(examListCalls()).toBe(beforeSwitch + 1);
+      const switchedExam = switchedList.find((exam) => exam.hasResult === true);
+      if (switchedExam) {
+        // 报告未发布/无权限与本次验证无关；失败也要求没有回头请求上一个学生的列表。
+        await provider.getExamResult(switched, switchedExam.id).catch((error: Error) => {
+          console.log('[live] 切换学生后跳过一场成绩', error.message);
+        });
+        expect(examListCalls()).toBe(beforeSwitch + 1);
+      }
+      console.log(
+        '[live] 学生切换缓存隔离通过',
+        JSON.stringify({ students: profiles.length, switchedExams: switchedList.length }),
+      );
+    } else {
+      console.log('[live] 账号只有一个学生，跳过学生切换缓存隔离检查');
+    }
   });
 });
