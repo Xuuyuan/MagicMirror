@@ -22,6 +22,7 @@ export function QuestionImagePreview({
   revision,
   examId,
   subjectId,
+  reportId,
   headers,
   onDismiss,
   onLongPress,
@@ -31,6 +32,7 @@ export function QuestionImagePreview({
   revision?: string;
   examId: string;
   subjectId: string;
+  reportId?: string;
   headers?: Record<string, string>;
   onDismiss: () => void;
   onLongPress: (sheet: AnswerSheet) => void;
@@ -44,6 +46,7 @@ export function QuestionImagePreview({
       'question-images',
       examId,
       subjectId,
+      reportId,
       selection?.question.id,
       selection?.kind,
     ],
@@ -59,7 +62,7 @@ export function QuestionImagePreview({
           async (provider, session, requestSignal) => {
             if (provider.getQuestionAnswerSheets) {
               const cached = queryClient.getQueryData<ExamResult>(
-                accountQueryKeys.result(accountId, revision, examId),
+                accountQueryKeys.result(accountId, revision, examId, reportId),
               );
               const sheets = await provider.getQuestionAnswerSheets(
                 session,
@@ -67,7 +70,7 @@ export function QuestionImagePreview({
                 subjectId,
                 question.id,
                 cached,
-                { signal: requestSignal },
+                { signal: requestSignal, reportId },
               );
               if (!sheets.length) throw new ProviderError('NOT_FOUND', '平台未提供此题作答区域');
               return sheets;
@@ -77,6 +80,7 @@ export function QuestionImagePreview({
             return [
               await provider.getQuestionAnswerSheet(session, examId, subjectId, question.id, {
                 signal: requestSignal,
+                reportId,
               }),
             ];
           },

@@ -247,12 +247,14 @@ export default function Subject() {
     subjectId,
     subject,
     examName: selectedExamName,
+    reportId,
   } = useLocalSearchParams<{
     accountId: string;
     examId: string;
     subjectId: string;
     subject: string;
     examName?: string;
+    reportId?: string;
   }>();
   const { accounts } = useAccounts();
   const account = accounts.find((item) => item.id === accountId);
@@ -263,17 +265,24 @@ export default function Subject() {
   const [actions, setActions] = useState<AnswerSheet>();
   const [questionImage, setQuestionImage] = useState<QuestionImageSelection>();
   const query = useQuery(
-    subjectQueryOptions(queryClient, accountId, revision, examId, subjectId, subject),
+    subjectQueryOptions(queryClient, accountId, revision, examId, subjectId, subject, reportId),
   );
   // 科目查询已获取考试成绩；这里只订阅同一缓存，不另发考试请求。
   const examQuery = useQuery({
-    ...examResultQueryOptions(accountId, revision, examId),
+    ...examResultQueryOptions(accountId, revision, examId, reportId),
     enabled: false,
   });
   const examName = examDisplayName(examQuery.data, selectedExamName);
   const noQuestions = !!query.data && !query.data.questions?.length;
   const markedQuery = useQuery({
-    ...watermarkedAnswerSheetsQueryOptions(queryClient, accountId, revision, examId, subjectId),
+    ...watermarkedAnswerSheetsQueryOptions(
+      queryClient,
+      accountId,
+      revision,
+      examId,
+      subjectId,
+      reportId,
+    ),
     enabled: !!revision && noQuestions,
   });
   const provider = account ? providerRegistry.get(account.providerId) : undefined;
@@ -287,6 +296,7 @@ export default function Subject() {
       examId,
       subjectId,
       hasEssay && essaySupported,
+      reportId,
     ),
   );
   const statisticsQuery = useQuery(
@@ -297,6 +307,7 @@ export default function Subject() {
       examId,
       subjectId,
       provider?.getSubjectStatistics !== undefined,
+      reportId,
     ),
   );
   const questions = useMemo(() => {
@@ -325,9 +336,10 @@ export default function Subject() {
   const essaySections = detail.reportSections?.filter((section) => section.placement === 'essay');
   const reportSections = detail.reportSections?.filter((section) => section.placement !== 'essay');
   const originalScore =
-    detail.providerContext?.originalScore && detail.providerContext.scaledScore
-      ? detail.providerContext.originalScore
-      : undefined;
+    detail.originalScore ??
+    (detail.providerContext?.originalScore && detail.providerContext.scaledScore
+      ? Number(detail.providerContext.originalScore)
+      : undefined);
   const gradePercentile = detail.providerContext?.gradePercentile;
   const essayAvg = detail.providerContext?.essayAvg;
   const essayMax = detail.providerContext?.essayMax;
@@ -358,7 +370,7 @@ export default function Subject() {
               percentile={gradePercentile}
               style={{ paddingBottom: 6 }}
             />
-            {originalScore !== undefined ? (
+            {originalScore !== undefined && originalScore !== detail.score ? (
               <Text variant="bodySmall" style={{ paddingBottom: 4 }}>
                 原始 {originalScore}
               </Text>
@@ -422,7 +434,10 @@ export default function Subject() {
             mode="contained-tonal"
             style={{ flex: 1 }}
             onPress={() =>
-              router.push({ pathname: '/answer-sheets', params: { accountId, examId, subjectId } })
+              router.push({
+                pathname: '/answer-sheets',
+                params: { accountId, examId, subjectId, ...(reportId ? { reportId } : {}) },
+              })
             }
           >
             查看答题卡
@@ -432,7 +447,10 @@ export default function Subject() {
               mode="contained-tonal"
               style={{ flex: 1 }}
               onPress={() =>
-                router.push({ pathname: '/exam-papers', params: { accountId, examId, subjectId } })
+                router.push({
+                  pathname: '/exam-papers',
+                  params: { accountId, examId, subjectId, ...(reportId ? { reportId } : {}) },
+                })
               }
             >
               查看原卷
@@ -446,6 +464,7 @@ export default function Subject() {
         revision={revision}
         examId={examId}
         subjectId={detail.subjectId}
+        reportId={reportId}
         headers={detail.answerSheets?.[0]?.headers}
         onDismiss={() => setQuestionImage(undefined)}
         onLongPress={setActions}

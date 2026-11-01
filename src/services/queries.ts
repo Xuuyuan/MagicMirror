@@ -17,28 +17,50 @@ export const accountQueryKeys = {
     ['account', accountId, revision, 'profiles'] as const,
   exams: (accountId?: string, revision?: string) =>
     ['account', accountId, revision, 'exams'] as const,
-  result: (accountId: string, revision: string | undefined, examId: string) =>
-    ['account', accountId, revision, 'result', examId] as const,
-  subject: (accountId: string, revision: string | undefined, examId: string, subjectId: string) =>
-    ['account', accountId, revision, 'subject', examId, subjectId] as const,
-  sheets: (accountId: string, revision: string | undefined, examId: string, subjectId?: string) =>
-    ['account', accountId, revision, 'sheets', examId, subjectId] as const,
+  result: (accountId: string, revision: string | undefined, examId: string, reportId?: string) =>
+    ['account', accountId, revision, 'result', examId, reportId] as const,
+  subject: (
+    accountId: string,
+    revision: string | undefined,
+    examId: string,
+    subjectId: string,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'subject', examId, subjectId, reportId] as const,
+  sheets: (
+    accountId: string,
+    revision: string | undefined,
+    examId: string,
+    subjectId?: string,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'sheets', examId, subjectId, reportId] as const,
   watermarkedSheets: (
     accountId: string,
     revision: string | undefined,
     examId: string,
     subjectId: string,
-  ) => ['account', accountId, revision, 'watermarked-sheets', examId, subjectId] as const,
-  papers: (accountId: string, revision: string | undefined, examId: string, subjectId: string) =>
-    ['account', accountId, revision, 'papers', examId, subjectId] as const,
-  essay: (accountId: string, revision: string | undefined, examId: string, subjectId: string) =>
-    ['account', accountId, revision, 'essay', examId, subjectId] as const,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'watermarked-sheets', examId, subjectId, reportId] as const,
+  papers: (
+    accountId: string,
+    revision: string | undefined,
+    examId: string,
+    subjectId: string,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'papers', examId, subjectId, reportId] as const,
+  essay: (
+    accountId: string,
+    revision: string | undefined,
+    examId: string,
+    subjectId: string,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'essay', examId, subjectId, reportId] as const,
   subjectStatistics: (
     accountId: string,
     revision: string | undefined,
     examId: string,
     subjectId: string,
-  ) => ['account', accountId, revision, 'subject-statistics', examId, subjectId] as const,
+    reportId?: string,
+  ) => ['account', accountId, revision, 'subject-statistics', examId, subjectId, reportId] as const,
   unclaimedExams: (accountId?: string, revision?: string) =>
     ['account', accountId, revision, 'unclaimed-exams'] as const,
 };
@@ -83,15 +105,16 @@ export function examResultQueryOptions(
   accountId: string,
   revision: string | undefined,
   examId: string,
+  reportId?: string,
 ) {
   return queryOptions({
-    queryKey: accountQueryKeys.result(accountId, revision, examId),
+    queryKey: accountQueryKeys.result(accountId, revision, examId, reportId),
     enabled: !!revision,
     queryFn: ({ signal }) =>
       withAccount(
         accountId,
         (provider, session, requestSignal) =>
-          provider.getExamResult(session, examId, { signal: requestSignal }),
+          provider.getExamResult(session, examId, { signal: requestSignal, reportId }),
         signal,
       ),
   });
@@ -104,14 +127,15 @@ export function subjectQueryOptions(
   examId: string,
   subjectId: string,
   subject?: string,
+  reportId?: string,
 ) {
   return queryOptions({
-    queryKey: accountQueryKeys.subject(accountId, revision, examId, subjectId),
+    queryKey: accountQueryKeys.subject(accountId, revision, examId, subjectId, reportId),
     enabled: !!revision,
     queryFn: async ({ signal }): Promise<SubjectDetail> => {
       // The result query owns its signal so one consumer cannot cancel a shared request.
       const result = await queryClient.fetchQuery(
-        examResultQueryOptions(accountId, revision, examId),
+        examResultQueryOptions(accountId, revision, examId, reportId),
       );
       throwIfAborted(signal);
       return withAccount(
@@ -132,12 +156,13 @@ export function subjectQueryOptions(
           }
           const detail = await provider.getSubjectDetail(session, examId, subjectId, result, {
             signal: requestSignal,
+            reportId,
           });
           throwIfAborted(requestSignal);
           // 未随详情返回答题卡不代表平台没有图片，保留独立答题卡查询。
           if (detail.answerSheets !== undefined)
             queryClient.setQueryData(
-              accountQueryKeys.sheets(accountId, revision, examId, subjectId),
+              accountQueryKeys.sheets(accountId, revision, examId, subjectId, reportId),
               detail.answerSheets,
             );
           return detail;
@@ -170,6 +195,7 @@ function subjectResourceQueryOptions<T>(
   pick: (provider: ScoreProvider) => SubjectResourceFetcher<T> | undefined,
   subjectId: string,
   fallback: T,
+  reportId?: string,
 ) {
   return queryOptions({
     queryKey,
@@ -181,10 +207,13 @@ function subjectResourceQueryOptions<T>(
           const fetchResource = pick(provider);
           if (!fetchResource) return fallback;
           const result = await queryClient.fetchQuery(
-            examResultQueryOptions(accountId, revision, examId),
+            examResultQueryOptions(accountId, revision, examId, reportId),
           );
           throwIfAborted(requestSignal);
-          return fetchResource(session, examId, subjectId, result, { signal: requestSignal });
+          return fetchResource(session, examId, subjectId, result, {
+            signal: requestSignal,
+            reportId,
+          });
         },
         signal,
       ),
@@ -201,6 +230,7 @@ function sheetQueryOptions(
   enabled: boolean,
   pick: (provider: ScoreProvider) => SubjectResourceFetcher<AnswerSheet[]> | undefined,
   subjectId: string,
+  reportId?: string,
 ) {
   return subjectResourceQueryOptions<AnswerSheet[]>(
     queryClient,
@@ -212,6 +242,7 @@ function sheetQueryOptions(
     pick,
     subjectId,
     [],
+    reportId,
   );
 }
 
@@ -221,16 +252,18 @@ export function answerSheetsQueryOptions(
   revision: string | undefined,
   examId: string,
   subjectId?: string,
+  reportId?: string,
 ) {
   return sheetQueryOptions(
     queryClient,
     accountId,
     revision,
     examId,
-    accountQueryKeys.sheets(accountId, revision, examId, subjectId),
+    accountQueryKeys.sheets(accountId, revision, examId, subjectId, reportId),
     !!subjectId,
     (provider) => (subjectId ? provider.getAnswerSheets : undefined),
     subjectId ?? '',
+    reportId,
   );
 }
 
@@ -241,16 +274,18 @@ export function watermarkedAnswerSheetsQueryOptions(
   revision: string | undefined,
   examId: string,
   subjectId: string,
+  reportId?: string,
 ) {
   return sheetQueryOptions(
     queryClient,
     accountId,
     revision,
     examId,
-    accountQueryKeys.watermarkedSheets(accountId, revision, examId, subjectId),
+    accountQueryKeys.watermarkedSheets(accountId, revision, examId, subjectId, reportId),
     true,
     (provider) => provider.getWatermarkedAnswerSheets,
     subjectId,
+    reportId,
   );
 }
 
@@ -261,16 +296,18 @@ export function paperImagesQueryOptions(
   revision: string | undefined,
   examId: string,
   subjectId: string,
+  reportId?: string,
 ) {
   return sheetQueryOptions(
     queryClient,
     accountId,
     revision,
     examId,
-    accountQueryKeys.papers(accountId, revision, examId, subjectId),
+    accountQueryKeys.papers(accountId, revision, examId, subjectId, reportId),
     !!subjectId,
     (provider) => provider.getPaperImages,
     subjectId,
+    reportId,
   );
 }
 
@@ -282,17 +319,19 @@ export function essayQueryOptions(
   examId: string,
   subjectId: string,
   enabled: boolean,
+  reportId?: string,
 ) {
   return subjectResourceQueryOptions<EssayDetail>(
     queryClient,
     accountId,
     revision,
     examId,
-    accountQueryKeys.essay(accountId, revision, examId, subjectId),
+    accountQueryKeys.essay(accountId, revision, examId, subjectId, reportId),
     enabled,
     (provider) => provider.getEssayDetail,
     subjectId,
     { answerSheets: [] },
+    reportId,
   );
 }
 
@@ -304,17 +343,19 @@ export function subjectStatisticsQueryOptions(
   examId: string,
   subjectId: string,
   enabled: boolean,
+  reportId?: string,
 ) {
   return subjectResourceQueryOptions<SubjectStatistic[]>(
     queryClient,
     accountId,
     revision,
     examId,
-    accountQueryKeys.subjectStatistics(accountId, revision, examId, subjectId),
+    accountQueryKeys.subjectStatistics(accountId, revision, examId, subjectId, reportId),
     enabled,
     (provider) => provider.getSubjectStatistics,
     subjectId,
     [],
+    reportId,
   );
 }
 

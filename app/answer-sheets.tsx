@@ -5,16 +5,17 @@ import { useAccounts } from '@/src/accounts-context';
 import { SheetGallery } from '@/src/sheet-gallery';
 
 export default function AnswerSheets() {
-  const { accountId, examId, subjectId } = useLocalSearchParams<{
+  const { accountId, examId, subjectId, reportId } = useLocalSearchParams<{
     accountId: string;
     examId: string;
     subjectId?: string;
+    reportId?: string;
   }>();
   const { accounts } = useAccounts();
   const revision = accounts.find((account) => account.id === accountId)?.revision;
   const queryClient = useQueryClient();
   const query = useQuery(
-    answerSheetsQueryOptions(queryClient, accountId, revision, examId, subjectId),
+    answerSheetsQueryOptions(queryClient, accountId, revision, examId, subjectId, reportId),
   );
   return (
     <SheetGallery
