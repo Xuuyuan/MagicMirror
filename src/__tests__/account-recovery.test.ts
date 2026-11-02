@@ -124,3 +124,34 @@ it('keeps a newly edited account when recovery finishes late', async () => {
   });
   expect((await accountStorage.load(account.id))?.revision).toBe('edited');
 });
+
+it('requires official web login instead of replaying a saved password for web sessions', async () => {
+  await accountStorage.save({ ...account, authMode: 'webview', password: 'saved-password' });
+  jest
+    .mocked(provider.refreshSession!)
+    .mockRejectedValue(new ProviderError('SESSION_EXPIRED', 'expired'));
+  const authenticate = jest.mocked(provider.authenticate);
+  await expect(withAccount(account.id, jest.fn())).rejects.toMatchObject({
+    code: 'SESSION_EXPIRED',
+  });
+  expect(authenticate).not.toHaveBeenCalled();
+});
+
+it('treats a legacy account without auth mode as web login when its provider requires it', async () => {
+  Object.defineProperty(provider, 'webLogin', {
+    value: {
+      url: 'https://official.test/',
+      allowedOrigins: ['https://official.test'],
+      script: () => '',
+      authenticate: jest.fn(),
+    },
+  });
+  await accountStorage.save({ ...account, password: 'saved-password', authMode: undefined });
+  jest
+    .mocked(provider.refreshSession!)
+    .mockRejectedValue(new ProviderError('SESSION_EXPIRED', 'expired'));
+  await expect(withAccount(account.id, jest.fn())).rejects.toMatchObject({
+    code: 'SESSION_EXPIRED',
+  });
+  expect(provider.authenticate).not.toHaveBeenCalled();
+});

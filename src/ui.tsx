@@ -240,12 +240,7 @@ export function ErrorCard({
       </Text>
       {retry && <Button onPress={retry}>重试</Button>}
       {loginRequired && accountId && (
-        <Button
-          mode="contained"
-          onPress={() => router.push({ pathname: '/account-edit', params: { id: accountId } })}
-        >
-          重新登录 / 编辑账号
-        </Button>
+        <OfficialLoginButton key={accountId} accountId={accountId} fallbackToEdit />
       )}
       {restricted && accountId && <OfficialLoginButton accountId={accountId} />}
     </Card>
