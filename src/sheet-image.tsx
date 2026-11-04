@@ -380,11 +380,13 @@ export function SheetViewerModal({
   sheets,
   onDismiss,
   onLongPress,
+  onImageError,
 }: {
   sheet?: AnswerSheet;
   sheets?: AnswerSheet[];
   onDismiss: () => void;
   onLongPress?: (sheet: AnswerSheet) => void;
+  onImageError?: (message: string) => void;
 }) {
   const items = sheets ?? (sheet ? [sheet] : []);
   const key = JSON.stringify(items.map((item) => [item.url, item.region]));
@@ -418,6 +420,7 @@ export function SheetViewerModal({
             sheet={current}
             onDismiss={onDismiss}
             onLongPress={current.region ? undefined : onLongPress}
+            onImageError={onImageError}
           />
           {items.length > 1 ? (
             <View
@@ -464,10 +467,12 @@ function ImageViewer({
   sheet,
   onDismiss,
   onLongPress,
+  onImageError,
 }: {
   sheet: AnswerSheet;
   onDismiss: () => void;
   onLongPress?: (sheet: AnswerSheet) => void;
+  onImageError?: (message: string) => void;
 }) {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -487,6 +492,7 @@ function ImageViewer({
   const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
   const onDismissRef = useRef(onDismiss);
   const longPressRef = useRef(onLongPress);
+  const onImageErrorRef = useRef(onImageError);
   const sheetRef = useRef(sheet);
   const distance = useCallback(
     (touches: readonly { pageX: number; pageY: number }[]) =>
@@ -500,8 +506,9 @@ function ImageViewer({
   }, [onDismiss]);
   useEffect(() => {
     longPressRef.current = onLongPress;
+    onImageErrorRef.current = onImageError;
     sheetRef.current = sheet;
-  }, [onLongPress, sheet]);
+  }, [onLongPress, onImageError, sheet]);
   const fireLongPress = useCallback(() => {
     const current = sheetRef.current;
     longPressRef.current?.(current);
@@ -594,7 +601,11 @@ function ImageViewer({
             <SheetImage
               sheet={sheet}
               style={{ width: baseWidth, height: baseHeight }}
-              onError={(message) => setImageError(message ?? sheetImageFailureMessage)}
+              onError={(message) => {
+                const text = message ?? sheetImageFailureMessage;
+                setImageError(text);
+                onImageErrorRef.current?.(text);
+              }}
               onLoad={(imageWidth, imageHeight) => {
                 naturalRef.current = { width: imageWidth, height: imageHeight };
                 setNatural({ width: imageWidth, height: imageHeight });

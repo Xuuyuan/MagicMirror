@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Modal, Pressable, StyleSheet, View } from 'react-native';
 import {
@@ -9,6 +10,8 @@ import {
 import type { QuestionImageKind } from './question-score-groups';
 import { withAccount } from './services/accounts';
 import { accountQueryKeys } from './services/queries';
+import { archivedSheetMessage } from './services/sheet-messages';
+import { SheetArchiveNotice } from './sheet-archive';
 import { SheetViewerModal } from './sheet-image';
 import { Card, ErrorCard, LoadingState } from './ui';
 
@@ -38,6 +41,9 @@ export function QuestionImagePreview({
   onLongPress: (sheet: AnswerSheet) => void;
 }) {
   const queryClient = useQueryClient();
+  const selectionKey = selection ? `${selection.question.id}:${selection.kind}` : '';
+  const [archivedKey, setArchivedKey] = useState('');
+  const archived = !!selectionKey && archivedKey === selectionKey;
   const query = useQuery({
     queryKey: [
       'account',
@@ -96,8 +102,51 @@ export function QuestionImagePreview({
     },
   });
   if (!selection) return null;
+  // 小题作答图被平台归档时不再打开空白的全屏图片区域，直接显示归档说明与恢复入口。
+  if (query.data?.length && archived && selection.kind === 'student')
+    return (
+      <Modal transparent visible onRequestClose={onDismiss} statusBarTranslucent>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            padding: 24,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+          }}
+        >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={onDismiss}
+            accessibilityRole="button"
+            accessibilityLabel="关闭归档提示"
+          />
+          <View onStartShouldSetResponder={() => true}>
+            <Card>
+              <SheetArchiveNotice
+                accountId={accountId}
+                revision={revision}
+                examId={examId}
+                subjectId={subjectId}
+                retry={onDismiss}
+                retryText="关闭"
+              />
+            </Card>
+          </View>
+        </View>
+      </Modal>
+    );
   if (query.data?.length)
-    return <SheetViewerModal sheets={query.data} onDismiss={onDismiss} onLongPress={onLongPress} />;
+    return (
+      <SheetViewerModal
+        sheets={query.data}
+        onDismiss={onDismiss}
+        onLongPress={onLongPress}
+        onImageError={(message) => {
+          if (selection.kind === 'student' && message === archivedSheetMessage)
+            setArchivedKey(selectionKey);
+        }}
+      />
+    );
   return (
     <Modal transparent visible onRequestClose={onDismiss} statusBarTranslucent>
       <View

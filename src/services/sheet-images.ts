@@ -1,13 +1,12 @@
 import { CryptoDigestAlgorithm, digestStringAsync } from 'expo-crypto';
 import { Directory, File, Paths } from 'expo-file-system';
 import { embeddedImageData } from '../domain/image-uri';
+import { archivedSheetMessage, sheetImageFailureMessage } from './sheet-messages';
+
+export * from './sheet-messages';
 
 const cacheDirectory = new Directory(Paths.cache, 'answer-sheets');
 const inFlight = new Map<string, Promise<string>>();
-
-export const archivedSheetMessage =
-  '该考试的图片已被平台归档，暂时无法读取，请前往智学网官方 App 查看。';
-export const sheetImageFailureMessage = '图片无法加载或与作答区域不匹配，请关闭后重新获取。';
 
 /** Only diagnose failed Zhixue storage reads; never forward account headers to OSS. */
 export async function sheetImageErrorMessage(uri: string): Promise<string> {

@@ -1194,6 +1194,59 @@ it('bridges the student homepage using the logged-in student, not a child or mas
     },
   });
 });
+it('reports the archive tier and submits restore as a form-encoded POST', async () => {
+  let canRestore = true;
+  let restoring = false;
+  let remainingSeconds: number | undefined;
+  const { provider, transport, encoded } = await sheetSetup((url) => {
+    if (url.pathname.endsWith('/canRestoreArchiveImages'))
+      return { errorCode: 0, result: { canRestore } };
+    if (url.pathname.endsWith('/getArchiveImageRestoreStatus'))
+      return {
+        errorCode: 0,
+        result: {
+          restoring,
+          ...(remainingSeconds !== undefined ? { remainingSeconds } : {}),
+        },
+      };
+    if (url.pathname.endsWith('/restoreArchiveImages')) return { errorCode: 0, result: null };
+  });
+  await expect(provider.getSheetArchiveState!(session, encoded, 'paper')).resolves.toEqual({
+    tier: 'cold',
+    restoring: false,
+  });
+  restoring = true;
+  remainingSeconds = 19767;
+  await expect(provider.getSheetArchiveState!(session, encoded, 'paper')).resolves.toEqual({
+    tier: 'cold',
+    restoring: true,
+    remainingSeconds: 19767,
+  });
+  canRestore = false;
+  const statusCalls = () =>
+    transport.mock.calls.filter(([url]) => String(url).endsWith('/getArchiveImageRestoreStatus'))
+      .length;
+  const before = statusCalls();
+  await expect(provider.getSheetArchiveState!(session, encoded, 'paper')).resolves.toEqual({
+    tier: 'deep',
+    restoring: false,
+  });
+  expect(statusCalls()).toBe(before);
+  await provider.restoreSheetArchive!(session, encoded, 'paper');
+  const call = transport.mock.calls.find(([url]) => String(url).endsWith('/restoreArchiveImages'));
+  expect(call).toBeDefined();
+  const [input, init] = call!;
+  const url = new URL(String(input));
+  expect(url.origin).toBe('https://ali-bg.zhixue.com');
+  expect(url.search).toBe('');
+  expect(init?.method).toBe('POST');
+  const headers = new Headers(init?.headers);
+  expect(headers.get('Content-Type')).toBe('application/x-www-form-urlencoded');
+  expect(headers.get('sucUserToken')).toBe(token);
+  expect(init?.body).toBe(
+    new URLSearchParams({ source: 'EXAM', topicSetId: 'paper', token }).toString(),
+  );
+});
 it.each([
   ['/container/container/student/index/', 'parent', '虚构姓名'],
   ['/container/container/student/index/', 'student', ''],

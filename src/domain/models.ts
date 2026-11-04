@@ -126,6 +126,16 @@ export interface AnswerSheet {
   headers?: Record<string, string>;
   region?: ImageRegion;
 }
+/**
+ * 平台侧图片归档状态：cold 可自助恢复，deep 只能联系平台客服。
+ * restoring 仅对 cold 有意义，来自平台恢复状态接口。
+ */
+export interface SheetArchiveState {
+  tier: 'cold' | 'deep';
+  restoring: boolean;
+  /** 平台下发的预计剩余恢复秒数；仅在 restoring 时可能出现。 */
+  remainingSeconds?: number;
+}
 /** 作文：题干全文与本人作答扫描图；平台未提供时 answerSheets 为空数组。 */
 export interface EssayDetail {
   prompt?: string;

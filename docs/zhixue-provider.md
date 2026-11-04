@@ -4,7 +4,7 @@
 
 - 平台：智学网；官方入口 https://www.zhixue.com/。
 - 登录：添加账号时输入账号密码，自动填充官方 WebView 登录页，由用户提交并完成验证；确认保存后凭据保存在 SecureStore。
-- 已实现：当前学生、官方学年、考试列表、主报告、近五次成绩变化、学科诊断雷达图、单科知识点说明、逐题得分与选择题答案、多页本人答题卡及逐题多区域作答预览。真实 Android 登录、布局与手势仍待设备验收。
+- 已实现：当前学生、官方学年、考试列表、主报告、近五次成绩变化、学科诊断雷达图、单科知识点说明、逐题得分与选择题答案、多页本人答题卡及逐题多区域作答预览，以及答题卡/原卷冷归档图片的恢复入口。真实 Android 登录、布局与手势仍待设备验收。
 - 不提供官方精确排名；仅在人数比例规则得到确认时显示标明“预估”的排名范围，分数型或无法确认规则时隐藏，`capabilities.ranking` 保持 false。
 - 暂不开放绑定学生切换、逐题解析和空白试卷原卷；答题卡展示原始扫描图，不合成官网另行绘制的分数与批阅笔迹。
 - 不使用自有转发服务，不绕过验证码、显示权限或访问限制。
@@ -69,6 +69,15 @@ Provider 提供 getSubjectDetail/getAnswerSheets/getQuestionAnswerSheets，并�
 仅在 showSingleTopicScore=true 且非 homework_no_scoring 时显示单题分数。40219 为学校未开放，40216 为存储限制，40218/40220/-1 为原卷缺失，保留官方边界并给出提示；这些状态不会使已有科目成绩整页失败。会话过期、网络和未知结构错误仍正常上报。
 
 sheetImages 按官方页序返回全部原始扫描图，依照官方客户端把 HTTP 升级为 HTTPS，保留签名查询参数，拒绝非 HTTPS、带凭据或非默认端口的图片地址。图片只使用官方响应下发的存储地址，不向图片主机附带账号 Token/Cookie。图片列表和逐题数据独立解析，单个资源的缺失不会阻塞另一个资源。
+
+## 归档图片
+
+官方会把时间较久的扫描图转入 OSS 归档存储：图片地址返回 403 且响应体为 `<Code>InvalidObjectState</Code>` 时，不是登录失效。Provider 按官方 H5 逻辑查询 `api-parentReport/fileCommon/canRestoreArchiveImages`（表单 POST，`source=EXAM&topicSetId=<paperId>`）：
+
+- `canRestore=true` 为冷归档，继续查询 `getArchiveImageRestoreStatus` 的 `restoring` 状态；
+- 其他情况为深归档，界面提示通过智学网官方 App 联系客服。
+
+冷归档未在恢复中时，界面显示“恢复”按钮；只有用户显式点击后才调用 `restoreArchiveImages`。多页答题卡/原卷只保留第一页卡片，归档说明和恢复按钮只出现一次。该调用是平台侧写操作，禁止自动重试或由图片加载失败自动触发。官方提示恢复约需 6 小时；恢复期间不把“已提交”持久化到本地，退出再进入时根据平台状态接口显示“恢复中”或重新显示恢复按钮，恢复完成后图片正常加载。状态接口返回 `remainingSeconds` 时显示具体剩余时长（例如“5 小时 29 分钟”），缺失时回退到约 6 小时的通用文案。2026-11-04 已用真实家长账号只读验证 `canRestoreArchiveImages` 返回 `canRestore=true`、`getArchiveImageRestoreStatus` 返回 `restoring=true` 与 `remainingSeconds`；`restoreArchiveImages` 仍未实际调用。
 
 用户必须确认当前学生后才能保存，确认前再次核对学生；异步初始化可通过 AbortSignal 立即取消，避免页面卸载或开发模式重新挂载留下占用；登录中途修改学年也不会被旧候选覆盖。官方网页登录按钮按 Provider 能力路由。
 

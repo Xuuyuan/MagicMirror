@@ -20,6 +20,8 @@ export default function AnswerSheets() {
   return (
     <SheetGallery
       accountId={accountId}
+      revision={revision}
+      examId={examId}
       subjectId={subjectId}
       title="答题卡"
       missingSubjectText="请从单科详情进入答题卡。"

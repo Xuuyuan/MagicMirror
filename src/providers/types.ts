@@ -11,6 +11,7 @@ import type {
   ExamSummary,
   ProviderCapabilities,
   SearchableExam,
+  SheetArchiveState,
   StudentProfile,
   SubjectDetail,
   SubjectStatistic,
@@ -118,6 +119,26 @@ export interface ScoreProvider {
     cachedResult?: ExamResult,
     options?: ProviderRequestOptions,
   ): Promise<AnswerSheet[]>;
+  /**
+   * 可选能力：查询某个科目图片集的归档状态（仅当平台区分冷/深归档时实现）。
+   * 只读；不得由图片加载失败自动触发恢复。
+   */
+  getSheetArchiveState?(
+    session: AuthSession,
+    examId: string,
+    subjectId: string,
+    options?: ProviderRequestOptions,
+  ): Promise<SheetArchiveState>;
+  /**
+   * 可选能力：请求平台恢复已归档图片。调用即产生平台侧副作用，
+   * 只能由用户显式点击恢复按钮触发，禁止自动重放。
+   */
+  restoreSheetArchive?(
+    session: AuthSession,
+    examId: string,
+    subjectId: string,
+    options?: ProviderRequestOptions,
+  ): Promise<void>;
   /** 可选能力：带分数水印的答题卡（图片上标注各题得分）；与 `getAnswerSheets` 的无水印版相互独立。 */
   getWatermarkedAnswerSheets?(
     session: AuthSession,

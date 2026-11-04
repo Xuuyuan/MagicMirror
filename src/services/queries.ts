@@ -1,9 +1,11 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query';
+import { ProviderError } from '@/src/domain/models';
 import type {
   AnswerSheet,
   AuthSession,
   EssayDetail,
   ExamResult,
+  SheetArchiveState,
   StudentProfile,
   SubjectDetail,
   SubjectStatistic,
@@ -33,6 +35,12 @@ export const accountQueryKeys = {
     subjectId?: string,
     reportId?: string,
   ) => ['account', accountId, revision, 'sheets', examId, subjectId, reportId] as const,
+  sheetArchive: (
+    accountId: string,
+    revision: string | undefined,
+    examId: string,
+    subjectId: string,
+  ) => ['account', accountId, revision, 'sheet-archive', examId, subjectId] as const,
   watermarkedSheets: (
     accountId: string,
     revision: string | undefined,
@@ -265,6 +273,49 @@ export function answerSheetsQueryOptions(
     subjectId ?? '',
     reportId,
   );
+}
+
+/**
+ * 答题卡/原卷图片的归档状态；仅在界面确认图片是 OSS 归档对象后启用。
+ * 重新进入页面时默认重新向平台确认 restoring，而不是只信本地记录；
+ * 60 秒内复用缓存，避免刚点击恢复就退出再进入时把状态读回旧值。
+ */
+export function sheetArchiveQueryOptions(
+  accountId: string,
+  revision: string | undefined,
+  examId: string,
+  subjectId: string | undefined,
+  enabled: boolean,
+) {
+  return queryOptions({
+    queryKey: accountQueryKeys.sheetArchive(accountId, revision, examId, subjectId ?? ''),
+    enabled: enabled && !!revision && !!subjectId,
+    staleTime: 60000,
+    queryFn: ({ signal }): Promise<SheetArchiveState | undefined> =>
+      withAccount(
+        accountId,
+        (provider, session, requestSignal) =>
+          provider.getSheetArchiveState
+            ? provider.getSheetArchiveState(session, examId, subjectId!, {
+                signal: requestSignal,
+              })
+            : Promise.resolve(undefined),
+        signal,
+      ),
+  });
+}
+
+/** 用户显式点击“恢复”后调用；平台侧写操作，不自动重试。 */
+export async function restoreSheetArchive(
+  accountId: string,
+  examId: string,
+  subjectId: string,
+): Promise<void> {
+  await withAccount(accountId, async (provider, session, signal) => {
+    if (!provider.restoreSheetArchive)
+      throw new ProviderError('UNSUPPORTED', '该平台不支持恢复归档图片');
+    await provider.restoreSheetArchive(session, examId, subjectId, { signal });
+  });
 }
 
 /** 带分数水印的答题卡（各题得分标注在图片上）；与无水印版使用独立的查询键，互不覆盖。 */
