@@ -2,7 +2,7 @@
   "expo": {
     "name": "魔镜",
     "slug": "magic-mirror",
-    "version": "1.0.0-beta.13",
+    "version": "1.0.0-beta.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -14,13 +14,13 @@
       "./plugins/with-report-network",
       "./plugins/with-release-build"
     ],
-    "extra": { "diagnosticsBuild": "20261101-beta13" },
+    "extra": { "diagnosticsBuild": "20261104-beta14" },
     "experiments": { "typedRoutes": true },
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "versionCode": 13,
+      "versionCode": 14,
       "permissions": ["android.permission.REQUEST_INSTALL_PACKAGES"],
       "adaptiveIcon": {
         "backgroundColor": "#F2F5FC",
