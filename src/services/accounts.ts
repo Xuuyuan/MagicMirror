@@ -25,8 +25,11 @@ export function invalidateAccountQueries(
 ): void {
   queryClient.removeQueries({ queryKey: ['account', accountId] });
 }
-function loginRequired(account: LocalAccount): ProviderError {
-  if (account.authMode === 'webview')
+function loginRequired(
+  account: LocalAccount,
+  provider: NonNullable<ReturnType<typeof providerRegistry.get>> = providerFor(account),
+): ProviderError {
+  if (account.authMode === 'webview' || (!account.authMode && provider.webLogin))
     return new ProviderError('SESSION_EXPIRED', '登录已失效，请重新使用官方网页登录并完成验证');
   return account.authMode === 'token' ||
     (!account.password && providerFor(account).authenticateWithToken)
@@ -84,7 +87,12 @@ async function restore(account: LocalAccount): Promise<AuthSession> {
       }
     }
     if (!session) {
-      if (!account.password) throw loginRequired(account);
+      if (
+        account.authMode === 'webview' ||
+        (!account.authMode && provider.webLogin) ||
+        !account.password
+      )
+        throw loginRequired(account, provider);
       session = await authenticatePassword(
         provider,
         account.login,

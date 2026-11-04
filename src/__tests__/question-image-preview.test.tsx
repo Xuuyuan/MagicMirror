@@ -28,8 +28,26 @@ jest.mock('../services/accounts', () => ({
     signal: AbortSignal,
   ) => callback(mockProvider, mockSession, signal),
 }));
-jest.mock('../sheet-image', () => ({
-  SheetViewerModal: ({ sheets }: { sheets: AnswerSheet[] }) => <div data-regions={sheets.length} />,
+jest.mock('../sheet-image', () => {
+  const { archivedSheetMessage } = jest.requireActual<{
+    archivedSheetMessage: string;
+  }>('../services/sheet-messages');
+  return {
+    SheetViewerModal: ({
+      sheets,
+      onImageError,
+    }: {
+      sheets: AnswerSheet[];
+      onImageError?: (message: string) => void;
+    }) => (
+      <div data-regions={sheets.length}>
+        <button onClick={() => onImageError?.(archivedSheetMessage)}>归档</button>
+      </div>
+    ),
+  };
+});
+jest.mock('../sheet-archive', () => ({
+  SheetArchiveNotice: () => <div data-archive-notice />,
 }));
 jest.mock('react-native', () => ({
   Modal: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -118,6 +136,14 @@ it('forwards all regions, cached exam and cancellation to the plural provider me
   mockData = regions;
   await render(student);
   expect(container.querySelector('[data-regions="3"]')).not.toBeNull();
+});
+it('switches an archived student image to the compact archive notice', async () => {
+  mockData = [sheet];
+  await render(student);
+  expect(container.querySelector('[data-regions="1"]')).not.toBeNull();
+  await act(async () => container.querySelector('button')!.click());
+  expect(container.querySelector('[data-archive-notice]')).not.toBeNull();
+  expect(container.querySelector('[data-regions]')).toBeNull();
 });
 it('preserves the legacy single-image method for existing providers', async () => {
   delete mockProvider.getQuestionAnswerSheets;

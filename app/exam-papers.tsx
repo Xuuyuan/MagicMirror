@@ -20,6 +20,8 @@ export default function ExamPapers() {
   return (
     <SheetGallery
       accountId={accountId}
+      revision={revision}
+      examId={examId}
       subjectId={subjectId}
       title="试卷原卷"
       missingSubjectText="请从单科详情进入试卷原卷。"

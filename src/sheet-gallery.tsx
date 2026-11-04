@@ -1,14 +1,18 @@
 import { useState } from 'react';
-import type { UseQueryResult } from '@tanstack/react-query';
+import { type UseQueryResult } from '@tanstack/react-query';
 import { Pressable } from 'react-native';
 import { Button, Text } from 'react-native-paper';
 import type { AnswerSheet } from './domain/models';
+import { SheetArchiveNotice } from './sheet-archive';
+import { archivedSheetMessage } from './services/sheet-messages';
 import { SheetActionsSheet } from './sheet-actions';
 import { AdaptiveSheetImage, SheetViewerModal } from './sheet-image';
 import { Screen, Header, Body, Card, ErrorCard, LoadingState, useDoubleTap } from './ui';
 
 interface SheetGalleryProps {
   accountId: string;
+  revision?: string;
+  examId: string;
   subjectId?: string;
   title: string;
   missingSubjectText: string;
@@ -25,6 +29,8 @@ interface SheetGalleryProps {
 /** 答题卡和原卷共用展示与交互；查询及缓存仍由各路由独立提供。 */
 export function SheetGallery({
   accountId,
+  revision,
+  examId,
   subjectId,
   title,
   missingSubjectText,
@@ -78,6 +84,10 @@ export function SheetGallery({
       </Screen>
     );
   const sheets = query.data ?? [];
+  // 归档是整个图片集的状态：多页答题卡只保留第一页卡片，文案和恢复按钮只出现一次。
+  const archived = sheets.some(
+    (sheet) => imageErrors.get(imageErrorKey(sheet)) === archivedSheetMessage,
+  );
   function refresh() {
     setImageErrors(new Map());
     setReloadKey((value) => value + 1);
@@ -88,38 +98,57 @@ export function SheetGallery({
       <Header title={title} back />
       <Body>
         {sheets.length ? (
-          sheets.map((sheet, index) => (
-            <Card key={`${sheet.subject}-${sheet.url}`}>
+          archived ? (
+            <Card key={sheets[0].url}>
               <Text variant="titleMedium">
-                {sheets.length > 1 ? `${sheet.subject}（第 ${index + 1} 页）` : sheet.subject}
+                {sheets.length > 1 ? `${sheets[0].subject}（第 1 页）` : sheets[0].subject}
               </Text>
-              <Pressable
-                accessibilityRole={imageAccessibilityLabel ? 'imagebutton' : undefined}
-                accessibilityLabel={imageAccessibilityLabel?.(index)}
-                onPress={() => handleImagePress(sheet)}
-                onLongPress={() => setActions(sheet)}
-              >
-                <AdaptiveSheetImage
-                  sheet={sheet}
-                  reloadKey={reloadKey}
-                  onError={(message) => {
-                    const key = imageErrorKey(sheet);
-                    setImageErrors((previous) =>
-                      new Map(previous).set(key, message ?? '图片链接可能已过期，请重新获取。'),
-                    );
-                  }}
-                />
-              </Pressable>
-              {imageErrors.has(imageErrorKey(sheet)) ? (
-                <Text>{imageErrors.get(imageErrorKey(sheet))}</Text>
-              ) : null}
-              {imageErrors.has(imageErrorKey(sheet)) ? (
-                <Button onPress={refresh} loading={query.isFetching}>
-                  {refreshText}
-                </Button>
-              ) : null}
+              <SheetArchiveNotice
+                accountId={accountId}
+                revision={revision}
+                examId={examId}
+                subjectId={subjectId}
+                retry={refresh}
+                retryText={refreshText}
+              />
             </Card>
-          ))
+          ) : (
+            sheets.map((sheet, index) => {
+              const failure = imageErrors.get(imageErrorKey(sheet));
+              return (
+                <Card key={`${sheet.subject}-${sheet.url}`}>
+                  <Text variant="titleMedium">
+                    {sheets.length > 1 ? `${sheet.subject}（第 ${index + 1} 页）` : sheet.subject}
+                  </Text>
+                  <Pressable
+                    accessibilityRole={imageAccessibilityLabel ? 'imagebutton' : undefined}
+                    accessibilityLabel={imageAccessibilityLabel?.(index)}
+                    onPress={() => handleImagePress(sheet)}
+                    onLongPress={() => setActions(sheet)}
+                  >
+                    <AdaptiveSheetImage
+                      sheet={sheet}
+                      reloadKey={reloadKey}
+                      onError={(message) => {
+                        const key = imageErrorKey(sheet);
+                        setImageErrors((previous) =>
+                          new Map(previous).set(key, message ?? '图片链接可能已过期，请重新获取。'),
+                        );
+                      }}
+                    />
+                  </Pressable>
+                  {failure ? (
+                    <>
+                      <Text>{failure}</Text>
+                      <Button onPress={refresh} loading={query.isFetching}>
+                        {refreshText}
+                      </Button>
+                    </>
+                  ) : null}
+                </Card>
+              );
+            })
+          )
         ) : (
           <Card>
             <Text>{emptyText}</Text>

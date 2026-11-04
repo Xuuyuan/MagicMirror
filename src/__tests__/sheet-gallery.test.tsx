@@ -3,9 +3,15 @@ import { act, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AnswerSheets from '../../app/answer-sheets';
 import ExamPapers from '../../app/exam-papers';
-import type { AnswerSheet, AuthSession } from '../domain/models';
+import type { AnswerSheet, AuthSession, SheetArchiveState } from '../domain/models';
 import type { ScoreProvider } from '../providers/types';
 import { accountQueryKeys } from '../services/queries';
+import {
+  archivedSheetColdMessage,
+  archivedSheetDeepMessage,
+  archivedSheetMessage,
+  archivedSheetRestoringMessage,
+} from '../services/sheet-messages';
 
 type Root = { render: (element: ReactNode) => void; unmount: () => void };
 const { createRoot } = jest.requireActual<{ createRoot: (element: Element) => Root }>(
@@ -19,11 +25,15 @@ const mockParams: { accountId: string; examId: string; subjectId?: string } = {
 };
 const mockGetAnswerSheets = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
 const mockGetPaperImages = jest.fn<Promise<AnswerSheet[]>, unknown[]>();
+const mockGetSheetArchiveState = jest.fn<Promise<SheetArchiveState>, unknown[]>();
+const mockRestoreSheetArchive = jest.fn<Promise<void>, unknown[]>();
 const mockImageErrorCallbacks = new Map<string, (message?: string) => void>();
 const mockProvider = {
   getExamResult: async () => ({ examId: mockParams.examId, examName: '虚构考试', subjects: [] }),
   getAnswerSheets: mockGetAnswerSheets,
   getPaperImages: mockGetPaperImages,
+  getSheetArchiveState: mockGetSheetArchiveState,
+  restoreSheetArchive: mockRestoreSheetArchive,
 };
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => mockParams }));
 jest.mock('../accounts-context', () => ({
@@ -187,6 +197,8 @@ beforeEach(() => {
   mockParams.subjectId = 'fictional-subject';
   mockGetAnswerSheets.mockReset().mockResolvedValue(sheets);
   mockGetPaperImages.mockReset().mockResolvedValue(papers);
+  mockGetSheetArchiveState.mockReset().mockResolvedValue({ tier: 'cold', restoring: false });
+  mockRestoreSheetArchive.mockReset().mockResolvedValue(undefined);
   client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   container = document.createElement('div');
   document.body.append(container);
@@ -306,17 +318,74 @@ describe.each(routes)('$title', (route) => {
       route.data[1].url,
     );
   });
-  it('保留图片归档提示，不误报为链接过期，仍可重新获取', async () => {
+  it('冷归档显示恢复按钮，点击后才触发恢复并显示恢复中', async () => {
     await render(route.Page);
     await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
-    await act(async () =>
-      mockImageErrorCallbacks.get(route.data[0].url)!('该考试的图片已被平台归档，暂时无法读取'),
-    );
-    expect(container.textContent).toContain('已被平台归档');
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetColdMessage));
+    const cards = container.querySelectorAll('article');
+    expect(cards).toHaveLength(1);
+    expect(cards[0].textContent).toContain('第 1 页');
+    expect(cards[0].querySelector('img')).toBeNull();
+    expect(container.textContent?.split(archivedSheetColdMessage)).toHaveLength(2);
     expect(container.textContent).not.toContain('图片链接可能已过期');
-    await click(route.refresh);
-    await waitFor(() => expect(route.fetch).toHaveBeenCalledTimes(2));
-    expect(container.textContent).not.toContain('已被平台归档');
+    expect(mockGetSheetArchiveState).toHaveBeenCalledTimes(1);
+    expect(mockRestoreSheetArchive).not.toHaveBeenCalled();
+    await click('恢复');
+    expect(mockRestoreSheetArchive).toHaveBeenCalledTimes(1);
+    expect(mockRestoreSheetArchive.mock.calls[0][1]).toBe(mockParams.examId);
+    expect(mockRestoreSheetArchive.mock.calls[0][2]).toBe(mockParams.subjectId);
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetRestoringMessage));
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+  });
+  it('深归档只提示联系官方客服，不提供恢复按钮', async () => {
+    mockGetSheetArchiveState.mockResolvedValue({ tier: 'deep', restoring: false });
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetDeepMessage));
+    expect(container.textContent).not.toContain(archivedSheetColdMessage);
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+  });
+  it('平台返回恢复中时不重复提供恢复按钮', async () => {
+    mockGetSheetArchiveState.mockResolvedValue({ tier: 'cold', restoring: true });
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetRestoringMessage));
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+    expect(mockRestoreSheetArchive).not.toHaveBeenCalled();
+  });
+  it('平台下发剩余秒数时显示具体剩余时间', async () => {
+    mockGetSheetArchiveState.mockResolvedValue({
+      tier: 'cold',
+      restoring: true,
+      remainingSeconds: 19767,
+    });
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain('5 小时 29 分钟'));
+    expect(container.textContent).not.toContain('系统约需 6 小时');
+  });
+  it('恢复提交后立即退出再进入，直接显示恢复中且不重复询问旧状态', async () => {
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetColdMessage));
+    await click('恢复');
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetRestoringMessage));
+    await act(async () => root.unmount());
+    container.remove();
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await render(route.Page);
+    await waitFor(() => expect(container.querySelectorAll('img')).toHaveLength(2));
+    await act(async () => mockImageErrorCallbacks.get(route.data[0].url)!(archivedSheetMessage));
+    await waitFor(() => expect(container.textContent).toContain(archivedSheetRestoringMessage));
+    expect(mockGetSheetArchiveState).toHaveBeenCalledTimes(1);
+    expect(mockRestoreSheetArchive).toHaveBeenCalledTimes(1);
   });
   it('重新获取时清除提示、更新下载刷新标识并使用新链接', async () => {
     await render(route.Page);

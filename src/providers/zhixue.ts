@@ -4,6 +4,7 @@ import {
   ProviderError,
   type AuthSession,
   type ExamResult,
+  type SheetArchiveState,
   type SubjectScore,
 } from '../domain/models';
 import { requestWithTimeout, throwIfAborted, type FetchTransport } from '../services/http';
@@ -126,6 +127,18 @@ const examContextSchema = z.object({
   start: milliseconds,
   end: milliseconds,
 });
+const archiveRestorePermissionSchema = z.object({ canRestore: z.boolean().optional() }).nullish();
+const archiveRestoreStatusSchema = z
+  .object({
+    restoring: z.boolean().optional(),
+    remainingSeconds: z
+      .number()
+      .finite()
+      .nonnegative()
+      .max(86400 * 365)
+      .optional(),
+  })
+  .nullish();
 type Year = z.infer<typeof yearSchema>;
 type Cursor = { pageIndex: number; actualPosition: number; ended?: boolean };
 
@@ -190,10 +203,17 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     params: Record<string, string | number> = {},
     options?: ProviderRequestOptions,
     retried = false,
+    form?: Record<string, string>,
+    replayable = true,
   ): Promise<unknown> {
     const origin = zhixueOfficialHost(host);
     const modern = path.startsWith('/api-parentReport/');
-    const query = modern ? { ...params, token } : params;
+    // The official report client sends fileCommon writes as form-encoded POST
+    // with the token in the body; reads stay GET with the token in the query.
+    const query = form || !modern ? params : { ...params, token };
+    const queryString = new URLSearchParams(
+      Object.entries(query).map(([key, value]) => [key, String(value)]),
+    ).toString();
     const guid = Crypto.randomUUID();
     const timestamp = String(Date.now() - clockOffset);
     // Public signing convention in the official report client, not a user secret.
@@ -205,13 +225,16 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     try {
       response = await requestWithTimeout(
         transport,
-        `${origin}${path}?${new URLSearchParams(Object.entries(query).map(([key, value]) => [key, String(value)]))}`,
+        `${origin}${path}${queryString ? `?${queryString}` : ''}`,
         {
+          method: form ? 'POST' : undefined,
           credentials: 'omit',
           redirect: 'error',
           signal: options?.signal,
+          ...(form ? { body: new URLSearchParams({ ...form, token }).toString() } : {}),
           headers: {
             ...(modern ? { sucUserToken: token } : { XToken: token, token }),
+            ...(form ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
             authbizcode: '0001',
             authguid: guid,
             authtimestamp: timestamp,
@@ -260,11 +283,12 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         .safeParse(body.result);
       if (
         !retried &&
+        replayable &&
         calibration.success &&
         Math.abs(Date.now() - Number(calibration.data[0].systime)) <= 86400000
       ) {
         clockOffset = Date.now() - Number(calibration.data[0].systime);
-        return request(host, path, token, params, options, true);
+        return request(host, path, token, params, options, true, form);
       }
       throw new ProviderError('UNKNOWN', '智学网时间校准失败，请检查设备时间');
     }
@@ -441,6 +465,24 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
     await verify(session, options);
     throwIfAborted(options?.signal);
     return raw;
+  }
+  function archiveRequest(
+    session: AuthSession,
+    action: string,
+    paperId: string,
+    options?: ProviderRequestOptions,
+    replayable = true,
+  ) {
+    return request(
+      'https://ali-bg.zhixue.com',
+      `/api-parentReport/fileCommon/${action}`,
+      session.accessToken,
+      {},
+      options,
+      false,
+      { source: 'EXAM', topicSetId: paperId },
+      replayable,
+    );
   }
   async function reports(
     session: AuthSession,
@@ -954,6 +996,39 @@ export function createZhixueProvider(transport: FetchTransport = fetch): ScorePr
         subjectId,
         subject.subject,
       );
+    },
+    async getSheetArchiveState(session, examId, subjectId, options) {
+      // Verify the student, exam ownership and that the paper belongs to this exam
+      // before touching the platform's file archive endpoints.
+      await sheetSubject(session, examId, subjectId, undefined, options);
+      // The official report client treats anything except an explicit
+      // canRestore=true as the deep archive tier.
+      const permission = parse(
+        archiveRestorePermissionSchema,
+        await archiveRequest(session, 'canRestoreArchiveImages', subjectId, options),
+        '归档权限',
+      );
+      if (permission?.canRestore !== true)
+        return { tier: 'deep', restoring: false } satisfies SheetArchiveState;
+      const status = parse(
+        archiveRestoreStatusSchema,
+        await archiveRequest(session, 'getArchiveImageRestoreStatus', subjectId, options),
+        '归档状态',
+      );
+      const restoring = status?.restoring === true;
+      return {
+        tier: 'cold',
+        restoring,
+        ...(restoring && status?.remainingSeconds !== undefined
+          ? { remainingSeconds: status.remainingSeconds }
+          : {}),
+      } satisfies SheetArchiveState;
+    },
+    async restoreSheetArchive(session, examId, subjectId, options) {
+      await sheetSubject(session, examId, subjectId, undefined, options);
+      // Write request: callers must only invoke this from an explicit user action.
+      // Never replay it automatically, even for the official clock-calibration error.
+      await archiveRequest(session, 'restoreArchiveImages', subjectId, options, false);
     },
     async getQuestionAnswerSheets(session, examId, subjectId, questionId, cachedResult, options) {
       const { exam, subject } = await sheetSubject(
